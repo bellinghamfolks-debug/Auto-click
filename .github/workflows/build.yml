@@ -1,0 +1,59 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle 8.5
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Build Debug APK
+        working-directory: ./android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Rename APK
+        working-directory: ./android
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk out/mokafeefah-clicker-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mokafeefah-clicker-apk
+          path: android/out/mokafeefah-clicker-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release (on manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "إصدار رقم ${{ github.run_number }}"
+          files: android/out/mokafeefah-clicker-debug.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

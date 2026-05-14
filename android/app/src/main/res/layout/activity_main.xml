@@ -1,0 +1,323 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layoutDirection="rtl"
+    android:background="@color/background"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- Header -->
+        <TextView
+            android:id="@+id/headerTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/header_title"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary_dark"
+            android:gravity="start"
+            android:paddingBottom="6dp"
+            android:accessibilityHeading="true" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/header_subtitle"
+            android:textSize="15sp"
+            android:textColor="@color/text_secondary"
+            android:paddingBottom="20dp" />
+
+        <!-- Status Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_status"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:accessibilityHeading="true" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/service_status_label"
+            android:textSize="15sp"
+            android:textColor="@color/text_secondary" />
+
+        <TextView
+            android:id="@+id/serviceStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp"
+            android:background="@color/surface"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:text="@string/service_status_disabled"
+            android:accessibilityLiveRegion="polite" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/exec_status_label"
+            android:textSize="15sp"
+            android:textColor="@color/text_secondary" />
+
+        <TextView
+            android:id="@+id/execStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:padding="12dp"
+            android:layout_marginBottom="20dp"
+            android:background="@color/surface"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:text="@string/exec_status_idle"
+            android:accessibilityLiveRegion="polite" />
+
+        <!-- Coordinates Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_coords"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:accessibilityHeading="true" />
+
+        <TextView
+            android:id="@+id/labelLikeX"
+            android:labelFor="@+id/inputLikeX"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_like_x"
+            android:textSize="15sp"
+            android:paddingTop="8dp" />
+        <EditText
+            android:id="@+id/inputLikeX"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="number"
+            android:hint="@string/hint_coord"
+            android:textSize="18sp"
+            android:contentDescription="@string/label_like_x" />
+
+        <TextView
+            android:id="@+id/labelLikeY"
+            android:labelFor="@+id/inputLikeY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_like_y"
+            android:textSize="15sp"
+            android:paddingTop="8dp" />
+        <EditText
+            android:id="@+id/inputLikeY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="number"
+            android:hint="@string/hint_coord"
+            android:textSize="18sp"
+            android:contentDescription="@string/label_like_y" />
+
+        <TextView
+            android:id="@+id/labelYesX"
+            android:labelFor="@+id/inputYesX"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_yes_x"
+            android:textSize="15sp"
+            android:paddingTop="8dp" />
+        <EditText
+            android:id="@+id/inputYesX"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="number"
+            android:hint="@string/hint_coord"
+            android:textSize="18sp"
+            android:contentDescription="@string/label_yes_x" />
+
+        <TextView
+            android:id="@+id/labelYesY"
+            android:labelFor="@+id/inputYesY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_yes_y"
+            android:textSize="15sp"
+            android:paddingTop="8dp" />
+        <EditText
+            android:id="@+id/inputYesY"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="number"
+            android:hint="@string/hint_coord"
+            android:textSize="18sp"
+            android:contentDescription="@string/label_yes_y" />
+
+        <!-- Timing Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_timing"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary"
+            android:paddingTop="20dp"
+            android:paddingBottom="8dp"
+            android:accessibilityHeading="true" />
+
+        <TextView
+            android:id="@+id/labelDelay"
+            android:labelFor="@+id/inputDelay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_delay"
+            android:textSize="15sp"
+            android:paddingTop="8dp" />
+        <EditText
+            android:id="@+id/inputDelay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="number"
+            android:hint="@string/hint_delay"
+            android:textSize="18sp"
+            android:contentDescription="@string/label_delay" />
+
+        <TextView
+            android:id="@+id/labelRepeat"
+            android:labelFor="@+id/inputRepeat"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_repeat"
+            android:textSize="15sp"
+            android:paddingTop="8dp" />
+        <EditText
+            android:id="@+id/inputRepeat"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="number"
+            android:hint="@string/hint_repeat"
+            android:textSize="18sp"
+            android:contentDescription="@string/label_repeat" />
+
+        <!-- Scroll Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_scroll"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary"
+            android:paddingTop="20dp"
+            android:paddingBottom="8dp"
+            android:accessibilityHeading="true" />
+
+        <CheckBox
+            android:id="@+id/checkScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/label_scroll"
+            android:textSize="16sp"
+            android:contentDescription="@string/label_scroll" />
+
+        <!-- Actions Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/section_actions"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary"
+            android:paddingTop="20dp"
+            android:paddingBottom="12dp"
+            android:accessibilityHeading="true" />
+
+        <Button
+            android:id="@+id/btnStart"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="64dp"
+            android:text="@string/btn_start"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:backgroundTint="@color/success"
+            android:textColor="@color/on_primary"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="@string/btn_start" />
+
+        <Button
+            android:id="@+id/btnStop"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="64dp"
+            android:text="@string/btn_stop"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:backgroundTint="@color/stop_red"
+            android:textColor="@color/on_primary"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="@string/btn_stop" />
+
+        <Button
+            android:id="@+id/btnTestLike"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/btn_test_like"
+            android:textSize="17sp"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="@string/btn_test_like" />
+
+        <Button
+            android:id="@+id/btnTestYes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/btn_test_yes"
+            android:textSize="17sp"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="@string/btn_test_yes" />
+
+        <Button
+            android:id="@+id/btnOpenAccessibility"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/btn_open_accessibility"
+            android:textSize="17sp"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="@string/btn_open_accessibility" />
+
+        <Button
+            android:id="@+id/btnReset"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:text="@string/btn_reset"
+            android:textSize="17sp"
+            android:layout_marginBottom="24dp"
+            android:contentDescription="@string/btn_reset" />
+
+    </LinearLayout>
+
+</ScrollView>

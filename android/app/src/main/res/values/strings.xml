@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">مكفوف كليكر</string>
+    <string name="service_label">خدمة النقر التلقائي للمكفوفين</string>
+    <string name="service_description">تقوم هذه الخدمة بتنفيذ نقرات تلقائية على إحداثيات يحددها المستخدم بنفسه داخل تطبيقات أخرى. تعمل عبر إذن إمكانية الوصول فقط، ولا تحتاج صلاحية الجذر، ولا تتجاوز حماية أي تطبيق.</string>
+
+    <string name="header_title">مكفوف كليكر - نقرات تلقائية للمكفوفين</string>
+    <string name="header_subtitle">حدد إحداثيات الأزرار وعدد التكرار، والتطبيق سينقر نيابة عنك</string>
+
+    <string name="section_status">حالة التطبيق</string>
+    <string name="service_status_label">حالة خدمة إمكانية الوصول</string>
+    <string name="service_status_enabled">مفعلة</string>
+    <string name="service_status_disabled">غير مفعلة - اضغط زر فتح إعدادات إمكانية الوصول</string>
+    <string name="exec_status_label">حالة التنفيذ</string>
+    <string name="exec_status_idle">خامل</string>
+    <string name="exec_status_running">يعمل</string>
+    <string name="exec_status_stopped">متوقف</string>
+    <string name="exec_status_completed">مكتمل</string>
+    <string name="exec_status_running_progress">يعمل - التكرار رقم %1$d من %2$d</string>
+
+    <string name="section_coords">إحداثيات الأزرار</string>
+    <string name="label_like_x">إحداثي زر الإعجاب الأفقي X</string>
+    <string name="label_like_y">إحداثي زر الإعجاب العمودي Y</string>
+    <string name="label_yes_x">إحداثي زر نعم الأفقي X</string>
+    <string name="label_yes_y">إحداثي زر نعم العمودي Y</string>
+    <string name="hint_coord">أدخل رقمًا بالبكسل</string>
+
+    <string name="section_timing">التوقيت والتكرار</string>
+    <string name="label_delay">مدة الانتظار بين الخطوات بالميلي ثانية</string>
+    <string name="hint_delay">مثال: 1500</string>
+    <string name="label_repeat">عدد مرات التكرار</string>
+    <string name="hint_repeat">مثال: 10</string>
+
+    <string name="section_scroll">خيار التمرير</string>
+    <string name="label_scroll">تمرير الشاشة للأسفل بعد كل عملية لعرض العضو التالي</string>
+
+    <string name="section_actions">الأزرار الرئيسية</string>
+    <string name="btn_start">بدء التشغيل</string>
+    <string name="btn_stop">إيقاف التشغيل</string>
+    <string name="btn_test_like">تجربة نقرة الإعجاب</string>
+    <string name="btn_test_yes">تجربة نقرة نعم</string>
+    <string name="btn_open_accessibility">فتح إعدادات إمكانية الوصول</string>
+    <string name="btn_reset">استعادة الإعدادات الافتراضية</string>
+
+    <string name="msg_service_off">يجب تفعيل خدمة إمكانية الوصول أولًا. اضغط زر فتح إعدادات إمكانية الوصول.</string>
+    <string name="msg_invalid_input">أحد الحقول فارغ أو غير صالح. يرجى مراجعة الإحداثيات والتوقيت.</string>
+    <string name="msg_already_running">العملية تعمل حاليًا. اضغط إيقاف قبل بدء عملية جديدة.</string>
+    <string name="msg_started">بدأ التنفيذ</string>
+    <string name="msg_stopped">تم إيقاف التنفيذ</string>
+    <string name="msg_completed">اكتمل التنفيذ بنجاح</string>
+    <string name="msg_test_like_done">تم تنفيذ نقرة تجريبية على زر الإعجاب</string>
+    <string name="msg_test_yes_done">تم تنفيذ نقرة تجريبية على زر نعم</string>
+    <string name="msg_reset_done">تمت استعادة الإعدادات الافتراضية</string>
+    <string name="msg_test_failed">تعذر تنفيذ النقرة - تحقق من تفعيل الخدمة</string>
+</resources>

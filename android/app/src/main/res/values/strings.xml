@@ -23,22 +23,31 @@
     <string name="label_like_y">إحداثي زر الإعجاب العمودي Y</string>
     <string name="label_yes_x">إحداثي زر نعم الأفقي X</string>
     <string name="label_yes_y">إحداثي زر نعم العمودي Y</string>
+    <string name="label_close_x">إحداثي زر الإغلاق الأفقي X</string>
+    <string name="label_close_y">إحداثي زر الإغلاق العمودي Y</string>
     <string name="hint_coord">أدخل رقمًا بالبكسل</string>
+    <string name="close_hint">يُستخدم لإغلاق نافذة النجاح أو نافذة قيود السن أو الجنس</string>
 
     <string name="section_timing">التوقيت والتكرار</string>
-    <string name="label_delay">مدة الانتظار بين الخطوات بالميلي ثانية</string>
-    <string name="hint_delay">مثال: 1500</string>
+    <string name="label_delay_after_like">مدة الانتظار بعد نقرة الإعجاب بالميلي ثانية</string>
+    <string name="label_delay_after_yes">مدة الانتظار بعد نقرة نعم بالميلي ثانية</string>
+    <string name="label_delay_after_close">مدة الانتظار بعد نقرة الإغلاق بالميلي ثانية</string>
+    <string name="hint_delay_1s">مثال: 1000 أي ثانية واحدة</string>
+    <string name="hint_delay_2s">مثال: 2000 أي ثانيتان</string>
     <string name="label_repeat">عدد مرات التكرار</string>
     <string name="hint_repeat">مثال: 10</string>
 
     <string name="section_scroll">خيار التمرير</string>
     <string name="label_scroll">تمرير الشاشة للأسفل بعد كل عملية لعرض العضو التالي</string>
+    <string name="label_scroll_distance">مسافة التمرير بالبكسل - تحكم في حجم القفزة بين الأعضاء</string>
+    <string name="hint_scroll_distance">مثال: 600 - زده أو أنقصه حسب حجم بطاقة العضو</string>
 
     <string name="section_actions">الأزرار الرئيسية</string>
     <string name="btn_start">بدء التشغيل</string>
     <string name="btn_stop">إيقاف التشغيل</string>
     <string name="btn_test_like">تجربة نقرة الإعجاب</string>
     <string name="btn_test_yes">تجربة نقرة نعم</string>
+    <string name="btn_test_close">تجربة نقرة الإغلاق</string>
     <string name="btn_open_accessibility">فتح إعدادات إمكانية الوصول</string>
     <string name="btn_reset">استعادة الإعدادات الافتراضية</string>
 
@@ -50,6 +59,7 @@
     <string name="msg_completed">اكتمل التنفيذ بنجاح</string>
     <string name="msg_test_like_done">تم تنفيذ نقرة تجريبية على زر الإعجاب</string>
     <string name="msg_test_yes_done">تم تنفيذ نقرة تجريبية على زر نعم</string>
+    <string name="msg_test_close_done">تم تنفيذ نقرة تجريبية على زر الإغلاق</string>
     <string name="msg_reset_done">تمت استعادة الإعدادات الافتراضية</string>
     <string name="msg_test_failed">تعذر تنفيذ النقرة - تحقق من تفعيل الخدمة</string>
 </resources>

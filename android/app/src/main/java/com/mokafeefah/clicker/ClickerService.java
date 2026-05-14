@@ -12,9 +12,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * خدمة إمكانية الوصول الخاصة بـ "مكفوف كليكر".
  *
- * تقوم هذه الخدمة بتنفيذ نقرات تلقائية عبر dispatchGesture على إحداثيات
- * يحددها المستخدم بنفسه. لا تستخدم أي امتيازات خاصة، ولا تتجاوز حماية أي
- * تطبيق - فقط تستخدم الإذن الرسمي BIND_ACCESSIBILITY_SERVICE.
+ * تنفذ تسلسلًا قابلًا للضبط بالكامل:
+ *   1) نقر زر الإعجاب
+ *   2) انتظار قابل للضبط
+ *   3) نقر زر نعم
+ *   4) انتظار قابل للضبط
+ *   5) نقر زر الإغلاق (يغلق نافذة النجاح أو نافذة قيود السن/الجنس)
+ *   6) انتظار قابل للضبط
+ *   7) تمرير اختياري بمسافة قابلة للضبط
+ *   8) تكرار للعضو التالي
+ *
+ * تستخدم فقط dispatchGesture المرخّص رسميًا عبر AccessibilityService،
+ * بدون روت ودون تجاوز حماية أي تطبيق.
  */
 public class ClickerService extends AccessibilityService {
 
@@ -89,8 +98,7 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * بدء تسلسل النقرات التلقائية.
-     * يعيد false إذا كانت هناك عملية تعمل حاليًا.
+     * بدء تسلسل النقرات التلقائية. يعيد false إذا كانت هناك عملية تعمل.
      */
     public boolean startSequence(SequenceConfig cfg) {
         if (running.get()) return false;
@@ -124,23 +132,32 @@ public class ClickerService extends AccessibilityService {
             if (!running.get()) return;
             mainHandler.postDelayed(() -> {
                 if (!running.get()) return;
-                // الخطوة 2: نقر زر نعم
+                // الخطوة 2: نقر زر نعم (يعمل عند نافذة التأكيد، يتجاهل عند نافذة القيود)
                 dispatchClickAt(config.yesX, config.yesY, () -> {
                     if (!running.get()) return;
                     mainHandler.postDelayed(() -> {
                         if (!running.get()) return;
-                        if (config.scroll) {
-                            // الخطوة 3 (اختيارية): تمرير لأسفل
-                            dispatchScrollDown(() -> {
+                        // الخطوة 3: نقر زر الإغلاق
+                        // يغلق نافذة النجاح بعد التأكيد، أو يغلق نافذة قيود السن/الجنس مباشرة
+                        dispatchClickAt(config.closeX, config.closeY, () -> {
+                            if (!running.get()) return;
+                            mainHandler.postDelayed(() -> {
                                 if (!running.get()) return;
-                                mainHandler.postDelayed(this::runNextIteration, config.delayMs);
-                            });
-                        } else {
-                            runNextIteration();
-                        }
-                    }, config.delayMs);
+                                if (config.scroll) {
+                                    // الخطوة 4 (اختيارية): تمرير لأسفل بالمسافة المضبوطة
+                                    dispatchScrollDown(config.scrollDistance, () -> {
+                                        if (!running.get()) return;
+                                        // فاصل صغير قبل البدء بالعضو التالي
+                                        mainHandler.postDelayed(this::runNextIteration, 300L);
+                                    });
+                                } else {
+                                    runNextIteration();
+                                }
+                            }, config.delayAfterClose);
+                        });
+                    }, config.delayAfterYes);
                 });
-            }, config.delayMs);
+            }, config.delayAfterLike);
         });
     }
 
@@ -164,18 +181,24 @@ public class ClickerService extends AccessibilityService {
         }, null);
     }
 
-    private void dispatchScrollDown(Runnable onComplete) {
-        // تمرير من منتصف الشاشة لأعلى (يكافئ التمرير لأسفل في القائمة)
+    /**
+     * تمرير بمسافة محددة بالبكسل بدءًا من الجزء السفلي من الشاشة للأعلى.
+     */
+    private void dispatchScrollDown(int distancePx, Runnable onComplete) {
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
         int centerX = dm.widthPixels / 2;
-        int startY = (int) (dm.heightPixels * 0.75f);
-        int endY = (int) (dm.heightPixels * 0.30f);
+        // نبدأ التمرير من نقطة في الثلث السفلي وننتهي للأعلى بمسافة المسحة المطلوبة
+        int startY = (int) (dm.heightPixels * 0.72f);
+        int endY = startY - Math.max(50, distancePx);
+        if (endY < (int) (dm.heightPixels * 0.10f)) {
+            endY = (int) (dm.heightPixels * 0.10f);
+        }
 
         Path path = new Path();
         path.moveTo(centerX, startY);
         path.lineTo(centerX, endY);
         GestureDescription.StrokeDescription stroke =
-                new GestureDescription.StrokeDescription(path, 0, 350);
+                new GestureDescription.StrokeDescription(path, 0, 400);
         GestureDescription gesture = new GestureDescription.Builder()
                 .addStroke(stroke)
                 .build();
@@ -199,26 +222,37 @@ public class ClickerService extends AccessibilityService {
     }
 
     /**
-     * بنية الإعدادات الممررة لبدء التسلسل.
+     * إعدادات التسلسل الكاملة بكل القيم القابلة للضبط من الواجهة.
      */
     public static class SequenceConfig {
-        public final int likeX;
-        public final int likeY;
-        public final int yesX;
-        public final int yesY;
-        public final long delayMs;
+        public final int likeX, likeY;
+        public final int yesX, yesY;
+        public final int closeX, closeY;
+        public final long delayAfterLike;
+        public final long delayAfterYes;
+        public final long delayAfterClose;
         public final int repeat;
         public final boolean scroll;
+        public final int scrollDistance;
 
-        public SequenceConfig(int likeX, int likeY, int yesX, int yesY,
-                              long delayMs, int repeat, boolean scroll) {
-            this.likeX = likeX;
-            this.likeY = likeY;
-            this.yesX = yesX;
-            this.yesY = yesY;
-            this.delayMs = delayMs;
+        public SequenceConfig(int likeX, int likeY,
+                              int yesX, int yesY,
+                              int closeX, int closeY,
+                              long delayAfterLike,
+                              long delayAfterYes,
+                              long delayAfterClose,
+                              int repeat,
+                              boolean scroll,
+                              int scrollDistance) {
+            this.likeX = likeX; this.likeY = likeY;
+            this.yesX = yesX; this.yesY = yesY;
+            this.closeX = closeX; this.closeY = closeY;
+            this.delayAfterLike = delayAfterLike;
+            this.delayAfterYes = delayAfterYes;
+            this.delayAfterClose = delayAfterClose;
             this.repeat = repeat;
             this.scroll = scroll;
+            this.scrollDistance = scrollDistance;
         }
     }
 }

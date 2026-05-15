@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Baseer AI APK
 
 on:
   push:
@@ -37,13 +37,13 @@ jobs:
         working-directory: ./android
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/mokafeefah-clicker-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk out/baseer-ai-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-clicker-apk
-          path: android/out/mokafeefah-clicker-debug.apk
+          name: baseer-ai-apk
+          path: android/out/baseer-ai-debug.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -52,8 +52,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: "إصدار رقم ${{ github.run_number }}"
-          files: android/out/mokafeefah-clicker-debug.apk
+          name: "بصير AI - إصدار ${{ github.run_number }}"
+          files: android/out/baseer-ai-debug.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,21 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Dark theme palette with high contrast for low-vision users -->
-    <color name="background">#121212</color>
-    <color name="surface">#1E1E1E</color>
-    <color name="surface_elevated">#2A2A2A</color>
-
-    <color name="primary">#42A5F5</color>
-    <color name="primary_dark">#1E88E5</color>
-    <color name="accent">#FFCA28</color>
-
-    <color name="on_primary">#000000</color>
+    <color name="background">#0A0E1A</color>
+    <color name="surface">#1A1F2E</color>
+    <color name="surface_elevated">#262C3D</color>
+    <color name="primary">#5B8DEF</color>
+    <color name="primary_dark">#3B6EDB</color>
+    <color name="accent">#FFB84D</color>
+    <color name="on_primary">#FFFFFF</color>
     <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#B0BEC5</color>
-    <color name="text_hint">#757575</color>
-
-    <color name="success">#66BB6A</color>
-    <color name="error">#EF5350</color>
-    <color name="stop_red">#E53935</color>
-    <color name="divider">#3A3A3A</color>
+    <color name="text_secondary">#A8B2C7</color>
+    <color name="text_hint">#6B7385</color>
+    <color name="success">#4CAF50</color>
+    <color name="warning">#FF9800</color>
+    <color name="error">#F44336</color>
+    <color name="describe">#4FC3F7</color>
+    <color name="read">#81C784</color>
+    <color name="ask">#FFB74D</color>
+    <color name="translate">#BA68C8</color>
 </resources>

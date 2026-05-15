@@ -84,6 +84,17 @@ public class ApiClient {
         }
     }
 
+    public void shopping(String imageBase64, String allergens, Cb cb) {
+        try {
+            JSONObject body = new JSONObject();
+            body.put("image_base64", imageBase64);
+            body.put("allergens", allergens == null ? "" : allergens);
+            post("/api/baseer/shopping", body, cb);
+        } catch (Exception e) {
+            cb.onError(e.getMessage());
+        }
+    }
+
     public void health(Cb cb) {
         Request request = new Request.Builder().url(baseUrl + "/api/health").get().build();
         client.newCall(request).enqueue(wrap(cb));

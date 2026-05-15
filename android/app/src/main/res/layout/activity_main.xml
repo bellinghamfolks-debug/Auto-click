@@ -98,6 +98,19 @@
             android:backgroundTint="@color/translate"
             android:textColor="@color/on_primary"
             android:contentDescription="@string/btn_translate_desc"
+            android:layout_marginBottom="14dp" />
+
+        <Button
+            android:id="@+id/btnShopping"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="80dp"
+            android:text="@string/btn_shopping"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:backgroundTint="@color/shopping"
+            android:textColor="@color/on_primary"
+            android:contentDescription="@string/btn_shopping_desc"
             android:layout_marginBottom="24dp" />
 
         <!-- Secondary controls -->

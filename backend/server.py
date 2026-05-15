@@ -65,6 +65,11 @@ class TranslateRequest(BaseModel):
     )
 
 
+class ShoppingRequest(BaseModel):
+    image_base64: str
+    allergens: Optional[str] = Field("", description="حساسيات المستخدم مفصولة بفاصلة")
+
+
 # ============ Helpers ============
 
 _B64_RE = re.compile(r"^[A-Za-z0-9+/=\s]+$")
@@ -261,3 +266,31 @@ async def translate(req: TranslateRequest):
         "tone": tone,
         "direction": direction,
     }
+
+
+@app.post("/api/baseer/shopping")
+async def shopping(req: ShoppingRequest):
+    """التسوق الذكي: تحليل منتج (اسم، سعر، صلاحية، مكونات) مع كشف حساسيات."""
+    img = _clean_b64(req.image_base64)
+    allergens = (req.allergens or "").strip()
+
+    allergen_clause = ""
+    if allergens:
+        allergen_clause = (
+            f" المستخدم لديه حساسية من: {allergens}."
+            " إذا رأيت أيًا من هذه المواد ضمن مكونات المنتج، ابدأ إجابتك بتحذير واضح:"
+            " «تحذير حساسية:» متبوعًا بالمادة المكتشفة. ثم أكمل وصف المنتج."
+        )
+
+    system = (
+        "أنت مرافق تسوق ذكي للمكفوفين. حلّل المنتج في الصورة وأعطِ معلومات عملية مفيدة. "
+        "اذكر بترتيب: اسم المنتج ونوعه، العلامة التجارية إن ظهرت، الحجم/الوزن، السعر إن ظهر، "
+        "تاريخ انتهاء الصلاحية إن ظهر (وحذّر إن كان قريبًا)، أهم المكونات أو الخصائص، "
+        "وأي تحذيرات على العبوة. إن كان دواءً، أبرز المادة الفعالة والجرعة. "
+        "إن لم تستطع رؤية معلومة بوضوح، صرّح بذلك بدل التخمين."
+        f"{allergen_clause} "
+        "بالعربية الواضحة، حد أقصى 130 كلمة، بدون رموز ولا تنسيق Markdown."
+    )
+
+    result = await _ask_with_image(system, "حلّل هذا المنتج", img)
+    return {"info": result, "allergens_checked": bool(allergens)}

@@ -25,6 +25,9 @@
     <string name="btn_translate">المترجم الذكي</string>
     <string name="btn_translate_desc">ترجمة ذكية مع شرح نبرة النص الأصلي</string>
 
+    <string name="btn_shopping">التسوق الذكي</string>
+    <string name="btn_shopping_desc">صور أي منتج واعرف اسمه وسعره وصلاحيته ومكوناته مع كشف الحساسيات</string>
+
     <string name="btn_repeat">إعادة قراءة النتيجة</string>
     <string name="btn_stop_speech">إيقاف القراءة</string>
     <string name="btn_settings">الإعدادات</string>
@@ -78,6 +81,8 @@
     <string name="label_backend_url">عنوان خادم بصير</string>
     <string name="hint_backend_url">https://yourapp.preview.emergentagent.com</string>
     <string name="label_speech_rate">سرعة القراءة</string>
+    <string name="label_allergens">حساسيات المستخدم (مفصولة بفاصلة)</string>
+    <string name="hint_allergens">مثال: حليب، فول سوداني، غلوتين، بيض</string>
     <string name="btn_save">حفظ</string>
     <string name="btn_test_connection">اختبار الاتصال</string>
     <string name="msg_saved">تم الحفظ</string>

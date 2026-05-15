@@ -37,11 +37,13 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREFS = "baseer_prefs";
     private static final String K_BACKEND_URL = "backend_url";
     private static final String K_RATE = "speech_rate";
+    private static final String K_ALLERGENS = "allergens";
     private static final String DEFAULT_BACKEND = "https://mobile-dev-184.preview.emergentagent.com";
 
     private static final int FLOW_DESCRIBE = 1;
     private static final int FLOW_READ = 2;
     private static final int FLOW_ASK = 3;
+    private static final int FLOW_SHOPPING = 4;
 
     private TextView statusText, resultText;
     private SharedPreferences prefs;
@@ -100,6 +102,7 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btnRead).setOnClickListener(v -> startFlow(FLOW_READ));
         findViewById(R.id.btnAsk).setOnClickListener(v -> startFlow(FLOW_ASK));
         findViewById(R.id.btnTranslate).setOnClickListener(v -> showTranslateDialog());
+        findViewById(R.id.btnShopping).setOnClickListener(v -> startFlow(FLOW_SHOPPING));
         findViewById(R.id.btnRepeat).setOnClickListener(v -> {
             if (!lastResult.isEmpty()) tts.speak(lastResult);
         });
@@ -181,6 +184,10 @@ public class MainActivity extends AppCompatActivity {
                 }
                 api.ask(b64, pendingQuestion, apiCallback("answer"));
                 pendingQuestion = "";
+                break;
+            case FLOW_SHOPPING:
+                String allergens = prefs.getString(K_ALLERGENS, "");
+                api.shopping(b64, allergens, apiCallback("info"));
                 break;
         }
     }
@@ -340,6 +347,16 @@ public class MainActivity extends AppCompatActivity {
         rateInput.setContentDescription(getString(R.string.label_speech_rate));
         container.addView(rateInput);
 
+        TextView label3 = new TextView(this);
+        label3.setText(R.string.label_allergens);
+        container.addView(label3);
+
+        final EditText allergensInput = new EditText(this);
+        allergensInput.setText(prefs.getString(K_ALLERGENS, ""));
+        allergensInput.setHint(R.string.hint_allergens);
+        allergensInput.setContentDescription(getString(R.string.label_allergens));
+        container.addView(allergensInput);
+
         Button testBtn = new Button(this);
         testBtn.setText(R.string.btn_test_connection);
         testBtn.setContentDescription(getString(R.string.btn_test_connection));
@@ -370,6 +387,8 @@ public class MainActivity extends AppCompatActivity {
                         prefs.edit().putFloat(K_RATE, rate).apply();
                         tts.setRate(rate);
                     } catch (NumberFormatException ignored) {}
+                    prefs.edit().putString(K_ALLERGENS,
+                            allergensInput.getText().toString().trim()).apply();
                     toast(getString(R.string.msg_saved));
                 })
                 .setNegativeButton("إلغاء", null)

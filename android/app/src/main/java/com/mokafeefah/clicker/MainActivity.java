@@ -30,6 +30,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String K_TARGET_PKG = "target_pkg";
     private static final String K_PROFILE_KW = "profile_keywords";
     private static final String K_SCAN_INTERVAL = "scan_interval";
+    private static final String K_POPUP_WAIT = "popup_wait";
+    private static final String K_IDLE_TIMEOUT = "idle_timeout";
 
     private static final String DEF_LIKE = "إهتمام";
     private static final String DEF_YES = "نعم";
@@ -37,9 +39,12 @@ public class MainActivity extends AppCompatActivity {
     private static final String DEF_TARGET_PKG = "";
     private static final String DEF_PROFILE_KW = "المؤهل التعليمي,الوزن,الطول,تاريخ الميلاد";
     private static final long DEF_SCAN_INTERVAL = 300L;
+    private static final long DEF_POPUP_WAIT = 2000L;
+    private static final long DEF_IDLE_TIMEOUT = 30L; // بالثواني في الواجهة
 
     private EditText inputLikeText, inputYesText, inputCloseText,
-            inputTargetPackage, inputProfileKeywords, inputScanInterval;
+            inputTargetPackage, inputProfileKeywords, inputScanInterval,
+            inputPopupWait, inputIdleTimeout;
     private TextView serviceStatusText, execStatusText, counterText, lastActionText;
     private SharedPreferences prefs;
 
@@ -60,6 +65,8 @@ public class MainActivity extends AppCompatActivity {
         inputTargetPackage = findViewById(R.id.inputTargetPackage);
         inputProfileKeywords = findViewById(R.id.inputProfileKeywords);
         inputScanInterval = findViewById(R.id.inputScanInterval);
+        inputPopupWait = findViewById(R.id.inputPopupWait);
+        inputIdleTimeout = findViewById(R.id.inputIdleTimeout);
         serviceStatusText = findViewById(R.id.serviceStatusText);
         execStatusText = findViewById(R.id.execStatusText);
         counterText = findViewById(R.id.counterText);
@@ -107,6 +114,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateLiveStatus(String status, int count, String lastAction) {
+        String prevStatus = execStatusText.getText() == null ? "" : execStatusText.getText().toString();
         execStatusText.setText(status);
         execStatusText.setContentDescription(status);
         counterText.setText(String.valueOf(count));
@@ -114,6 +122,11 @@ public class MainActivity extends AppCompatActivity {
         if (lastAction != null && !lastAction.isEmpty()) {
             lastActionText.setText(lastAction);
             lastActionText.setContentDescription(lastAction);
+        }
+        // إن انتقلنا للتو إلى حالة "إيقاف تلقائي" أعرض رسالة وأطلق إعلانًا صوتيًا للقارئ
+        if (ClickerService.STATUS_AUTO_STOPPED.equals(status)
+                && !ClickerService.STATUS_AUTO_STOPPED.equals(prevStatus)) {
+            toast(getString(R.string.msg_auto_stopped));
         }
     }
 
@@ -134,8 +147,13 @@ public class MainActivity extends AppCompatActivity {
         String pkg = textOf(inputTargetPackage);
         String kwRaw = textOf(inputProfileKeywords);
         Long interval = parseLong(inputScanInterval);
+        Long popupWait = parseLong(inputPopupWait);
+        Long idleSecs = parseLong(inputIdleTimeout);
 
-        if (like.isEmpty() || yes.isEmpty() || close.isEmpty() || interval == null || interval < 150L) {
+        if (like.isEmpty() || yes.isEmpty() || close.isEmpty()
+                || interval == null || interval < 150L
+                || popupWait == null || popupWait < 300L
+                || idleSecs == null || idleSecs < 5L) {
             toast(getString(R.string.msg_invalid_input));
             return;
         }
@@ -150,7 +168,8 @@ public class MainActivity extends AppCompatActivity {
 
         saveCurrentValues();
         ClickerService.BotConfig cfg = new ClickerService.BotConfig(
-                like, yes, close, pkg, keywords, interval);
+                like, yes, close, pkg, keywords,
+                interval, popupWait, idleSecs * 1000L);
         boolean ok = svc.startBot(cfg);
         toast(ok ? getString(R.string.msg_started) : getString(R.string.msg_already_running));
     }
@@ -178,6 +197,8 @@ public class MainActivity extends AppCompatActivity {
         inputTargetPackage.setText(DEF_TARGET_PKG);
         inputProfileKeywords.setText(DEF_PROFILE_KW);
         inputScanInterval.setText(String.valueOf(DEF_SCAN_INTERVAL));
+        inputPopupWait.setText(String.valueOf(DEF_POPUP_WAIT));
+        inputIdleTimeout.setText(String.valueOf(DEF_IDLE_TIMEOUT));
         saveCurrentValues();
         toast(getString(R.string.msg_reset_done));
     }
@@ -189,6 +210,8 @@ public class MainActivity extends AppCompatActivity {
         inputTargetPackage.setText(prefs.getString(K_TARGET_PKG, DEF_TARGET_PKG));
         inputProfileKeywords.setText(prefs.getString(K_PROFILE_KW, DEF_PROFILE_KW));
         inputScanInterval.setText(String.valueOf(prefs.getLong(K_SCAN_INTERVAL, DEF_SCAN_INTERVAL)));
+        inputPopupWait.setText(String.valueOf(prefs.getLong(K_POPUP_WAIT, DEF_POPUP_WAIT)));
+        inputIdleTimeout.setText(String.valueOf(prefs.getLong(K_IDLE_TIMEOUT, DEF_IDLE_TIMEOUT)));
     }
 
     private void saveCurrentValues() {
@@ -200,6 +223,10 @@ public class MainActivity extends AppCompatActivity {
         e.putString(K_PROFILE_KW, textOf(inputProfileKeywords));
         Long iv = parseLong(inputScanInterval);
         if (iv != null) e.putLong(K_SCAN_INTERVAL, iv);
+        Long pw = parseLong(inputPopupWait);
+        if (pw != null) e.putLong(K_POPUP_WAIT, pw);
+        Long it = parseLong(inputIdleTimeout);
+        if (it != null) e.putLong(K_IDLE_TIMEOUT, it);
         e.apply();
     }
 

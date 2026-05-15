@@ -42,6 +42,12 @@
     <string name="label_scan_interval">سرعة فحص الشاشة بالميلي ثانية</string>
     <string name="hint_scan_interval">مثال: 300 - الأقل أسرع لكن يستهلك بطارية أكثر</string>
 
+    <string name="label_popup_wait">مدة انتظار ظهور النافذة المنبثقة بعد نقرة الإعجاب بالميلي ثانية</string>
+    <string name="hint_popup_wait">مثال: 2000 أي ثانيتان - زدها إذا الإنترنت بطيء</string>
+
+    <string name="label_idle_timeout">إيقاف تلقائي إذا لم يجد البوت أي زر إعجاب أو نعم لمدة (ثانية)</string>
+    <string name="hint_idle_timeout">مثال: 30 - يتوقف بعد 30 ثانية من عدم وجود أزرار</string>
+
     <!-- ===== Actions ===== -->
     <string name="section_actions">الأزرار الرئيسية</string>
     <string name="btn_start">بدء التشغيل</string>
@@ -55,6 +61,7 @@
     <string name="msg_already_running">البوت يعمل حاليًا. اضغط إيقاف قبل التشغيل من جديد.</string>
     <string name="msg_started">بدأ البوت العمل - افتح التطبيق الهدف الآن</string>
     <string name="msg_stopped">تم إيقاف البوت</string>
+    <string name="msg_auto_stopped">إيقاف تلقائي - لم يجد البوت أي أزرار لفترة طويلة</string>
     <string name="msg_reset_done">تمت استعادة الإعدادات الافتراضية</string>
 
     <!-- ===== Action labels (live status) ===== -->

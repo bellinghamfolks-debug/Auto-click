@@ -258,6 +258,42 @@
             android:textSize="18sp"
             android:contentDescription="@string/label_scan_interval" />
 
+        <TextView
+            android:labelFor="@+id/inputPopupWait"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_popup_wait"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp"
+            android:paddingTop="16dp" />
+        <EditText
+            android:id="@+id/inputPopupWait"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="number"
+            android:hint="@string/hint_popup_wait"
+            android:textSize="18sp"
+            android:contentDescription="@string/label_popup_wait" />
+
+        <TextView
+            android:labelFor="@+id/inputIdleTimeout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_idle_timeout"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp"
+            android:paddingTop="16dp" />
+        <EditText
+            android:id="@+id/inputIdleTimeout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="number"
+            android:hint="@string/hint_idle_timeout"
+            android:textSize="18sp"
+            android:contentDescription="@string/label_idle_timeout" />
+
         <!-- ===== Actions Section ===== -->
         <TextView
             android:layout_width="match_parent"

@@ -1,37 +1,38 @@
 package com.mokafeefah.clicker;
 
 import android.accessibilityservice.AccessibilityService;
+import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * بوت ذكي يعمل عبر تحليل شجرة العناصر (UI Hierarchy) للشاشة الحالية.
+ * بوت ذكي يعمل عبر تحليل شجرة العناصر (UI Hierarchy) لكل النوافذ النشطة.
  *
- * آلية العمل:
- *   كل تكة (افتراضي 300 مللي ثانية):
- *     1. اقرأ شجرة الشاشة عبر getRootInActiveWindow().
- *     2. تحقق من حزمة التطبيق الهدف (إن وُجد قيد).
- *     3. شرط الأمان: إن وُجدت كلمات تدل على ملف شخصي -> رجوع تلقائي.
- *     4. ابحث عن زر "نعم" - إن وُجد انقره.
- *     5. وإلا ابحث عن زر "إغلاق" - إن وُجد انقره.
- *     6. وإلا ابحث عن زر "إعجاب/اهتمام" - إن وُجد انقره وزد العداد.
- *     7. وإلا مرر القائمة برمجيًا.
- *
- * كل النقرات تتم عبر AccessibilityNodeInfo.performAction(ACTION_CLICK)
- * مما يضمن دقة 100% ولا يلمس أي منطقة غير مقصودة.
+ * مميزات هذه النسخة:
+ *  - البحث في جميع النوافذ النشطة بترتيب z-order (النوافذ المنبثقة أولًا).
+ *  - تأخير قابل للضبط (افتراضي 2000 مللي ثانية) بعد نقرة الإعجاب لانتظار ظهور النافذة المنبثقة.
+ *  - إيقاف تلقائي إذا لم يجد البوت أي إعجاب أو نعم خلال مدة محددة (افتراضي 30 ثانية).
+ *  - اهتزاز عند الإيقاف (يدوي أو تلقائي) لتنبيه المستخدم الكفيف.
+ *  - حماية من الدخول الخطأ لملف شخصي عبر GLOBAL_ACTION_BACK.
  */
 public class ClickerService extends AccessibilityService {
 
     public static final String STATUS_IDLE = "خامل";
     public static final String STATUS_RUNNING = "يعمل";
     public static final String STATUS_STOPPED = "متوقف";
+    public static final String STATUS_AUTO_STOPPED = "إيقاف تلقائي";
 
     public interface StatusListener {
         void onUpdate(String status, int likesCount, String lastAction);
@@ -46,6 +47,7 @@ public class ClickerService extends AccessibilityService {
     private BotConfig config;
     private String lastAction = "";
     private long lastBackTime = 0;
+    private long lastButtonFoundMs = 0;
 
     public static ClickerService getInstance() {
         return instance;
@@ -87,7 +89,6 @@ public class ClickerService extends AccessibilityService {
 
     public void setStatusListener(StatusListener l) {
         this.listener = l;
-        // إرسال آخر حالة معروفة فور الاشتراك
         if (l != null) {
             l.onUpdate(running.get() ? STATUS_RUNNING : STATUS_IDLE,
                     likesCount.get(),
@@ -95,121 +96,177 @@ public class ClickerService extends AccessibilityService {
         }
     }
 
-    public boolean isExecuting() {
-        return running.get();
-    }
+    public boolean isExecuting() { return running.get(); }
+    public int getLikesCount() { return likesCount.get(); }
+    public String getLastAction() { return lastAction == null ? "" : lastAction; }
 
-    public int getLikesCount() {
-        return likesCount.get();
-    }
-
-    public String getLastAction() {
-        return lastAction == null ? "" : lastAction;
-    }
-
-    /** بدء البوت. يعيد false إذا كان يعمل بالفعل. */
     public boolean startBot(BotConfig cfg) {
         if (running.get()) return false;
         this.config = cfg;
         this.likesCount.set(0);
         this.lastAction = "";
+        this.lastButtonFoundMs = System.currentTimeMillis();
         running.set(true);
         notifyUpdate(STATUS_RUNNING);
         handler.removeCallbacksAndMessages(null);
-        handler.postDelayed(tick, 500L); // مهلة قصيرة ليفتح المستخدم التطبيق الهدف
+        handler.postDelayed(tick, 500L);
         return true;
     }
 
     public void stopBot() {
+        stopInternal(STATUS_STOPPED);
+    }
+
+    private void stopInternal(String reason) {
         if (!running.get()) return;
         running.set(false);
         handler.removeCallbacksAndMessages(null);
-        notifyUpdate(STATUS_STOPPED);
+        vibrateAlert();
+        notifyUpdate(reason);
     }
 
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
             if (!running.get()) return;
+            long nextDelay = config.scanIntervalMs;
             try {
-                performOneTick();
+                nextDelay = performOneTick();
             } catch (Throwable t) {
-                // لا تتعطل أبدًا، استمر بالعمل
+                // لا تتعطل أبدًا
             }
             if (running.get()) {
-                handler.postDelayed(this, Math.max(150L, config.scanIntervalMs));
+                handler.postDelayed(this, Math.max(150L, nextDelay));
             }
         }
     };
 
-    private void performOneTick() {
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) {
-            setAction(getString(R.string.action_wait));
-            return;
+    /**
+     * ينفذ تكة واحدة من الحلقة. يعيد المدة المقترحة قبل التكة التالية.
+     */
+    private long performOneTick() {
+        // فحص الإيقاف التلقائي عند تجاوز المهلة
+        long now = System.currentTimeMillis();
+        if (now - lastButtonFoundMs > config.idleTimeoutMs) {
+            stopInternal(STATUS_AUTO_STOPPED);
+            return config.scanIntervalMs;
         }
 
-        // تصفية حسب حزمة التطبيق الهدف (إن وضع المستخدم قيدًا)
+        // اجمع كل النوافذ النشطة مرتبة من الأعلى (النوافذ المنبثقة) إلى الأسفل
+        List<AccessibilityNodeInfo> roots = collectAllRoots();
+        if (roots.isEmpty()) {
+            setAction(getString(R.string.action_wait));
+            return config.scanIntervalMs;
+        }
+
+        // تصفية بالحزمة إن وُجدت
         if (config.targetPackage != null && !config.targetPackage.isEmpty()) {
-            CharSequence pkg = root.getPackageName();
-            if (pkg == null || !config.targetPackage.equals(pkg.toString())) {
+            boolean anyMatches = false;
+            for (AccessibilityNodeInfo r : roots) {
+                CharSequence pkg = r.getPackageName();
+                if (pkg != null && config.targetPackage.equals(pkg.toString())) {
+                    anyMatches = true;
+                    break;
+                }
+            }
+            if (!anyMatches) {
                 setAction(getString(R.string.action_wait));
-                return;
+                return config.scanIntervalMs;
             }
         }
 
-        // شرط الأمان: إن دخلنا ملفًا شخصيًا بالخطأ -> رجوع تلقائي
-        // (نضع فاصلًا زمنيًا لمنع تكرار Back بسرعة)
-        if (System.currentTimeMillis() - lastBackTime > 1500L) {
+        // شرط الأمان: ملف شخصي
+        if (now - lastBackTime > 1500L) {
             for (String kw : config.profileKeywords) {
                 String key = kw == null ? "" : kw.trim();
                 if (key.isEmpty()) continue;
-                if (findNodeByText(root, key) != null) {
+                if (findNodeByTextInAll(roots, key) != null) {
                     performGlobalAction(GLOBAL_ACTION_BACK);
-                    lastBackTime = System.currentTimeMillis();
+                    lastBackTime = now;
                     setAction(getString(R.string.action_back));
-                    return;
+                    return 700L;
                 }
             }
         }
 
-        // الأولوية: نعم -> إغلاق -> إعجاب -> تمرير
-        AccessibilityNodeInfo yesNode = findClickableByText(root, config.yesText);
+        // الأولوية: نعم -> إغلاق -> إعجاب (نبحث في كل النوافذ بدءًا من الأعلى)
+        AccessibilityNodeInfo yesNode = findClickableInAll(roots, config.yesText);
         if (yesNode != null) {
             if (clickNode(yesNode)) {
                 setAction(getString(R.string.action_yes));
+                lastButtonFoundMs = now;
+                return 700L; // مهلة قصيرة لانتظار ظهور نافذة النجاح
             }
-            return;
+            return config.scanIntervalMs;
         }
 
-        AccessibilityNodeInfo closeNode = findClickableByText(root, config.closeText);
+        AccessibilityNodeInfo closeNode = findClickableInAll(roots, config.closeText);
         if (closeNode != null) {
             if (clickNode(closeNode)) {
                 setAction(getString(R.string.action_close));
+                return 800L; // مهلة لانغلاق النافذة قبل البحث عن إعجاب جديد
             }
-            return;
+            return config.scanIntervalMs;
         }
 
-        AccessibilityNodeInfo likeNode = findClickableByText(root, config.likeText);
+        AccessibilityNodeInfo likeNode = findClickableInAll(roots, config.likeText);
         if (likeNode != null) {
             if (clickNode(likeNode)) {
                 likesCount.incrementAndGet();
                 setAction(getString(R.string.action_like));
+                lastButtonFoundMs = now;
+                // التأخير الأهم: انتظر ظهور النافذة المنبثقة الفعلي قبل البحث عن "نعم"
+                return config.popupWaitMs;
             }
-            return;
+            return config.scanIntervalMs;
         }
 
         // لا توجد أزرار - مرر القائمة برمجيًا
-        AccessibilityNodeInfo scrollable = findScrollable(root);
+        AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
         if (scrollable != null) {
             scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
             setAction(getString(R.string.action_scroll));
-        } else {
-            setAction(getString(R.string.action_wait));
+            return 800L;
         }
+        setAction(getString(R.string.action_wait));
+        return config.scanIntervalMs;
     }
 
-    /** ينقر على عقدة قابلة للنقر، يصعد للأب إن لم تكن العقدة نفسها قابلة. */
+    /**
+     * يجمع جذور جميع النوافذ النشطة مرتبة بـ z-order (النوافذ الفوقية أولًا).
+     * يدمج النافذة النشطة (active) كاحتياط أيضًا.
+     */
+    private List<AccessibilityNodeInfo> collectAllRoots() {
+        List<AccessibilityNodeInfo> result = new ArrayList<>();
+
+        List<AccessibilityWindowInfo> windows = null;
+        try {
+            windows = getWindows();
+        } catch (Throwable t) {
+            windows = null;
+        }
+
+        if (windows != null && !windows.isEmpty()) {
+            List<AccessibilityWindowInfo> sorted = new ArrayList<>(windows);
+            // أعلى layer أولًا
+            Collections.sort(sorted, (a, b) -> Integer.compare(b.getLayer(), a.getLayer()));
+            for (AccessibilityWindowInfo w : sorted) {
+                if (w == null) continue;
+                AccessibilityNodeInfo r = null;
+                try { r = w.getRoot(); } catch (Throwable ignored) {}
+                if (r != null) result.add(r);
+            }
+        }
+
+        // احتياط: النافذة النشطة
+        AccessibilityNodeInfo active = null;
+        try { active = getRootInActiveWindow(); } catch (Throwable ignored) {}
+        if (active != null && !result.contains(active)) {
+            result.add(0, active); // ضعها في المقدمة كأولوية
+        }
+        return result;
+    }
+
     private boolean clickNode(AccessibilityNodeInfo node) {
         if (node == null) return false;
         AccessibilityNodeInfo target = findClickableSelfOrAncestor(node);
@@ -230,14 +287,38 @@ public class ClickerService extends AccessibilityService {
         return null;
     }
 
-    /**
-     * يبحث عن عقدة قابلة للنقر تطابق نصًا معينًا (في text أو contentDescription).
-     */
+    /** يبحث عن أول عنصر قابل للنقر مطابق للنص في أي من النوافذ المعطاة (بترتيب الأولوية). */
+    private AccessibilityNodeInfo findClickableInAll(List<AccessibilityNodeInfo> roots, String text) {
+        if (text == null || text.isEmpty()) return null;
+        for (AccessibilityNodeInfo root : roots) {
+            AccessibilityNodeInfo found = findClickableByText(root, text);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findNodeByTextInAll(List<AccessibilityNodeInfo> roots, String text) {
+        if (text == null || text.isEmpty()) return null;
+        for (AccessibilityNodeInfo root : roots) {
+            AccessibilityNodeInfo found = findNodeByText(root, text);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findScrollableInAll(List<AccessibilityNodeInfo> roots) {
+        for (AccessibilityNodeInfo root : roots) {
+            AccessibilityNodeInfo s = findScrollable(root);
+            if (s != null) return s;
+        }
+        return null;
+    }
+
     private AccessibilityNodeInfo findClickableByText(AccessibilityNodeInfo root, String text) {
         if (root == null || text == null || text.isEmpty()) return null;
         String needle = normalizeArabic(text);
 
-        // المحاولة 1: استخدام findAccessibilityNodeInfosByText الرسمية
+        // 1) المحاولة الرسمية أولًا
         List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByText(text);
         if (matches != null) {
             for (AccessibilityNodeInfo n : matches) {
@@ -246,8 +327,7 @@ public class ClickerService extends AccessibilityService {
                 if (clickable != null) return clickable;
             }
         }
-
-        // المحاولة 2: بحث تكراري يدوي مع تطبيع النص العربي
+        // 2) بحث تكراري يدوي مع تطبيع
         return findClickableRecursive(root, needle);
     }
 
@@ -266,7 +346,6 @@ public class ClickerService extends AccessibilityService {
         return null;
     }
 
-    /** يبحث عن أي عقدة مرئية تحتوي النص (دون اشتراط أن تكون قابلة للنقر). */
     private AccessibilityNodeInfo findNodeByText(AccessibilityNodeInfo root, String text) {
         if (root == null || text == null || text.isEmpty()) return null;
         String needle = normalizeArabic(text);
@@ -296,31 +375,21 @@ public class ClickerService extends AccessibilityService {
         return false;
     }
 
-    /**
-     * يطبّع النص العربي لمطابقة أكثر مرونة:
-     *  - إزالة التشكيل
-     *  - توحيد أشكال الألف (إ، أ، آ -> ا)
-     *  - توحيد ى -> ي
-     *  - توحيد ة -> ه
-     *  - إزالة المسافات الزائدة وتحويل للأحرف الصغيرة (للإنجليزية)
-     */
+    /** تطبيع النص العربي لمطابقة مرنة (تجاهل التشكيل وأشكال الألف/الياء/التاء المربوطة). */
     private String normalizeArabic(String s) {
         if (s == null) return "";
-        // إزالة التشكيل
         String r = s.replaceAll("[\u064B-\u0652\u0670\u0671]", "");
-        r = r.replace('\u0623', '\u0627') // أ -> ا
-             .replace('\u0625', '\u0627') // إ -> ا
-             .replace('\u0622', '\u0627') // آ -> ا
-             .replace('\u0649', '\u064A') // ى -> ي
-             .replace('\u0629', '\u0647'); // ة -> ه
+        r = r.replace('\u0623', '\u0627')
+             .replace('\u0625', '\u0627')
+             .replace('\u0622', '\u0627')
+             .replace('\u0649', '\u064A')
+             .replace('\u0629', '\u0647');
         return r.trim().toLowerCase();
     }
 
-    /** يبحث عن عنصر قابل للتمرير في الشجرة. */
     private AccessibilityNodeInfo findScrollable(AccessibilityNodeInfo node) {
         if (node == null) return null;
         if (node.isScrollable() && node.isVisibleToUser()) {
-            // تأكد أن التمرير للأمام ممكن
             List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
             if (actions != null) {
                 for (AccessibilityNodeInfo.AccessibilityAction a : actions) {
@@ -354,6 +423,20 @@ public class ClickerService extends AccessibilityService {
         handler.post(() -> l.onUpdate(status, count, act));
     }
 
+    /** اهتزاز تنبيهي: ثلاث نبضات لإعلام المستخدم الكفيف بالإيقاف. */
+    private void vibrateAlert() {
+        try {
+            Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (v == null || !v.hasVibrator()) return;
+            long[] pattern = {0, 250, 150, 250, 150, 250};
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                v.vibrate(VibrationEffect.createWaveform(pattern, -1));
+            } else {
+                v.vibrate(pattern, -1);
+            }
+        } catch (Throwable ignored) {}
+    }
+
     /** إعدادات البوت كاملة. */
     public static class BotConfig {
         public final String likeText;
@@ -362,15 +445,20 @@ public class ClickerService extends AccessibilityService {
         public final String targetPackage;
         public final List<String> profileKeywords;
         public final long scanIntervalMs;
+        public final long popupWaitMs;
+        public final long idleTimeoutMs;
 
         public BotConfig(String likeText, String yesText, String closeText,
-                         String targetPackage, List<String> profileKeywords, long scanIntervalMs) {
+                         String targetPackage, List<String> profileKeywords,
+                         long scanIntervalMs, long popupWaitMs, long idleTimeoutMs) {
             this.likeText = likeText == null ? "" : likeText.trim();
             this.yesText = yesText == null ? "" : yesText.trim();
             this.closeText = closeText == null ? "" : closeText.trim();
             this.targetPackage = targetPackage == null ? "" : targetPackage.trim();
             this.profileKeywords = profileKeywords == null ? new ArrayList<>() : profileKeywords;
             this.scanIntervalMs = Math.max(150L, scanIntervalMs);
+            this.popupWaitMs = Math.max(300L, popupWaitMs);
+            this.idleTimeoutMs = Math.max(5000L, idleTimeoutMs);
         }
     }
 }

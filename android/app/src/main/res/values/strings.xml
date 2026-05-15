@@ -34,9 +34,9 @@
 
     <!-- Basic labels & hints -->
     <string name="label_like_text">نص زر الإعجاب أو الاهتمام</string>
-    <string name="hint_like_text">مثال: إهتمام أو اهتمام أو إعجاب</string>
+    <string name="hint_like_text">مثال: إهتمام (كلمة واحدة فقط)</string>
     <string name="label_yes_text">نص زر التأكيد — نعم</string>
-    <string name="hint_yes_text">مثال: نعم أو موافق أو تأكيد</string>
+    <string name="hint_yes_text">مثال: نعم (كلمة واحدة فقط)</string>
     <string name="label_close_text">نص زر الإغلاق — لرسائل النجاح والقيود</string>
     <string name="hint_close_text">مثال: إغلاق أو حسناً أو موافق</string>
     <string name="label_target_package">اسم حزمة التطبيق الهدف — اختياري</string>
@@ -89,3 +89,4 @@
     <string name="action_watchdog">مراقب الاستعادة فعّال — إعادة تنشيط</string>
     <string name="action_event_trigger">استجابة لحدث الشاشة فوراً</string>
 </resources>
+>

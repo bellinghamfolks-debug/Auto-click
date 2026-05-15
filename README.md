@@ -1,45 +1,49 @@
 # مكفوف بوت 2.0 — Mokafeefah Clicker
 
-> 🇸🇦 **بوت ذكي يعتمد على خدمة Accessibility لقراءة شجرة عناصر أي تطبيق والنقر على الأزرار التي يحددها المستخدم بنفسه (مثل "إهتمام"، "نعم"، "إغلاق").**
->
-> الإصدار 2.0 يحل مشكلة البطء التراكمي الذي كان يصل لـ "عضو كل دقيقة" بإعادة بناء المحرك من الصفر.
+> 🇸🇦 **بوت يعتمد على Accessibility Service لقراءة شجرة عناصر التطبيق والنقر على الأزرار التي يحددها المستخدم بنفسه.**
+
+الإصدار **2.0** = منطق الإصدار الأصلي الذي كان يعمل بشكل صحيح + 5 إصلاحات هندسية لحل مشكلة البطء التراكمي.
 
 ---
 
-## ✨ الجديد في الإصدار 2.0
+## ✅ ما تم الحفاظ عليه من الإصدار 1 (المنطق الأساسي)
 
-| التحديث | الوصف |
-|---|---|
-| 🧠 **Smart Scan & Recycle** | `recycle()` لكل AccessibilityNodeInfo + نافذة منزلقة لذاكرة العناصر (60 عنصر) — يحافظ على سرعة فحص ثابتة |
-| ⚡ **Event-Driven Automation** | `onAccessibilityEvent` يلتقط `TYPE_WINDOW_STATE_CHANGED` فيستدعي tick فوراً بدل انتظار 300ms |
-| 🎯 **Filtering Logic** | كلمات قابلة للتخصيص: "مضاف سابقاً"، "لا يمكن الإضافة"، "تم الإرسال" — تجاوز فوري |
-| 📜 **Dynamic Scrolling** | `ACTION_SCROLL_FORWARD` على عقدة القائمة + fallback بمسافة سحب متكيّفة |
-| 🛡️ **Watchdog Timer** | 15 ثانية تجمد ⇒ GLOBAL_ACTION_BACK + scroll تلقائي لإعادة التنشيط |
-| ⚙️ **إعدادات جديدة** | حد التوقف، الوضع السريع، الاهتزاز، المحرك المستند للأحداث |
+- **State machine** بـ 4 حالات: `LOOK_LIKE → AFTER_LIKE → AFTER_YES → MUST_SCROLL`
+- **حقول النص كلمة واحدة فقط**: "إهتمام"، "نعم"، "إغلاق" (وليس قوائم مفصولة بفواصل)
+- **normalizeArabic** لتطبيع الهمزة (أ/إ/آ→ا)، الياء/الألف المقصورة (ى→ي)، التاء المربوطة (ة→ه) والتشكيل
+- **collectAllRoots** لجمع شجرة العناصر من **كل** النوافذ (popups في نوافذ منفصلة)
+- **boundsKey** بشبكة 80px لمنع إعادة نقر نفس العنصر بعد التمرير
+- **getInstance() + StatusListener** للتواصل المباشر بين Activity و Service
+
+## 🆕 الإصلاحات الـ 5 (مضافة بشكل غير مدمر)
+
+| # | الإصلاح | كيف يعمل |
+|---|---|---|
+| 1 | 🧠 **Smart Recycle** | لا يُحتفَظ بمراجع العقد بين الـ ticks، يُنظَّف `processedBounds` بعد كل scroll |
+| 2 | ⚡ **Event-Driven** (اختياري) | عند تفعيل المفتاح: يستجيب لـ `TYPE_WINDOW_STATE_CHANGED` **فقط أثناء AFTER_LIKE/AFTER_YES** مع debounce 400ms — آمن تماماً |
+| 3 | 🎯 **Filtering** | عند ظهور "مضاف سابقاً" أو "لا يمكن الإضافة" → نقر إغلاق + scroll فوري |
+| 4 | 📜 **Dynamic Scroll** | مسافة scroll متكيّفة (تقل عند النجاح، تزيد عند العلق) |
+| 5 | 🛡️ **Watchdog** | عند العلق 15 ثانية → BACK + scroll قوي **قبل** الإيقاف التلقائي |
+
+## ⚙️ الإعدادات الجديدة
+
+- 📝 **كلمات رسائل الخطأ** — قائمة مفصولة بفواصل (Filtering)
+- ⏱️ **مهلة Watchdog** (ثانية) — افتراضي 15
+- 🎯 **حد التوقف عند العدد** — 0 = لا حد
+- 🔔 **مفتاح الاهتزاز** عند الإيقاف والنجاح
+- ⚡ **مفتاح الوضع السريع** — يقلل الـ scan interval بمقدار 50ms
+- 🎬 **مفتاح Event-Driven** — معطل افتراضياً، لا تفعّله إلا بعد التجربة
 
 ---
 
-## 🛠️ كيف يعمل
+## 🚀 البناء التلقائي
 
-1. تفتح التطبيق وتحدد كلمات أزرار الإعجاب والتأكيد والإغلاق.
-2. تضغط زر "فتح إعدادات إمكانية الوصول" وتفعّل الخدمة من إعدادات النظام.
-3. تضغط "▶ بدء التشغيل" ثم تفتح التطبيق الهدف.
-4. البوت يقرأ الشاشة ويبحث عن نصوص الأزرار وينقرها لحظياً.
-5. عند ظهور رسالة خطأ يتم تخطي العضو فوراً، وعند التجمد يقوم بـ Back ثم scroll تلقائياً.
-
----
-
-## 📦 البناء التلقائي عبر GitHub Actions
-
-كل push على فرع `main` ينشئ APK جديد تلقائياً:
-- اسم الملف: `mokafeefah-clicker-v2.0-debug.apk`
-- يُنشر كـ artifact في الـ Action، ويُصدر تلقائياً عند `workflow_dispatch`.
+كل push على فرع `main` يُنتج: `mokafeefah-clicker-v2.0-debug.apk`
 
 ### البناء المحلي
 ```bash
-cd android
-gradle assembleDebug
-# APK at: android/app/build/outputs/apk/debug/app-debug.apk
+cd android && gradle assembleDebug
+# Output: app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ---
@@ -47,25 +51,20 @@ gradle assembleDebug
 ## 📁 هيكل المشروع
 
 ```
-android/
-├── build.gradle, settings.gradle, gradle.properties
-└── app/
-    ├── build.gradle  (versionName=2.0, versionCode=2)
-    └── src/main/
-        ├── AndroidManifest.xml
-        ├── java/com/mokafeefah/clicker/
-        │   ├── MainActivity.java    — شاشة الإعدادات
-        │   └── ClickerService.java  — المحرك (التحديثات الـ 5)
-        └── res/
-            ├── layout/activity_main.xml
-            ├── values/{strings,colors,themes}.xml
-            └── xml/accessibility_service_config.xml
+android/app/src/main/
+├── AndroidManifest.xml
+├── java/com/mokafeefah/clicker/
+│   ├── MainActivity.java    — شاشة الإعدادات (getInstance + StatusListener)
+│   └── ClickerService.java  — المحرك (State machine + 5 fixes)
+└── res/
+    ├── layout/activity_main.xml
+    ├── values/{strings,colors,themes}.xml
+    └── xml/accessibility_service_config.xml
 ```
 
----
+## 🔧 نصائح الاستخدام
 
-## ⚠️ تنبيه
-
-البوت يعمل على أي تطبيق يحدده المستخدم بنفسه عبر النصوص. لا يتجاوز حماية أي تطبيق ولا يستخدم إحداثيات ثابتة ولا يحتاج Root.
-
-استخدمه بمسؤولية ومراعاة شروط استخدام التطبيقات المستهدفة.
+1. أبقِ Event-Driven **معطلاً** في أول تجربة — المنطق الأصلي يعمل بشكل ممتاز بدونه
+2. إذا أردت سرعة أكبر بعد التأكد من ثبات البوت، فعّل Event-Driven
+3. كلمات رسائل الخطأ افتراضياً تغطي أكثر الحالات شيوعاً — أضف ما يلزم
+4. عند ظهور سلوك غريب: اضغط **استعادة الإعدادات الافتراضية** ثم جرّب من جديد

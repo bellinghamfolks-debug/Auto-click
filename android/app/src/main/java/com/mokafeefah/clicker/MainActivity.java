@@ -1,137 +1,109 @@
 package com.mokafeefah.clicker;
 
-import android.accessibilityservice.AccessibilityServiceInfo;
-import android.app.Activity;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.os.Build;
+import android.content.Context;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.view.View;
 import android.view.accessibility.AccessibilityManager;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AppCompatActivity;
+
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * MainActivity — مكفوف بوت 2.0
- * شاشة الإعدادات والتحكم. يحفظ كل القيم في SharedPreferences
- * ويستقبل تحديثات الحالة من ClickerService عبر LocalBroadcast.
+ * تواصل مع الـ Service عبر ClickerService.getInstance() + StatusListener.
  */
-public class MainActivity extends Activity {
+public class MainActivity extends AppCompatActivity {
 
     // ===== SharedPreferences =====
-    public static final String PREFS_NAME = "mokafeefah_clicker_prefs";
+    private static final String PREFS = "mokafeefah_prefs_v2";
     public static final String APP_VERSION = "2.0";
     public static final int APP_VERSION_CODE = 2;
 
-    // Basic keys (kept from v1 for backward compatibility)
-    public static final String KEY_LIKE_TEXT = "like_text";
-    public static final String KEY_YES_TEXT = "yes_text";
-    public static final String KEY_CLOSE_TEXT = "close_text";
-    public static final String KEY_TARGET_PACKAGE = "target_package";
-    public static final String KEY_PROFILE_KEYWORDS = "profile_keywords";
-    public static final String KEY_SCAN_INTERVAL = "scan_interval_ms";
-    public static final String KEY_POPUP_WAIT = "popup_wait_ms";
-    public static final String KEY_IDLE_TIMEOUT = "idle_timeout_sec";
+    // v1 keys (preserved for compatibility)
+    private static final String K_LIKE_TEXT = "like_text";
+    private static final String K_YES_TEXT = "yes_text";
+    private static final String K_CLOSE_TEXT = "close_text";
+    private static final String K_TARGET_PKG = "target_pkg";
+    private static final String K_PROFILE_KW = "profile_keywords";
+    private static final String K_SCAN_INTERVAL = "scan_interval";
+    private static final String K_POPUP_WAIT = "popup_wait";
+    private static final String K_IDLE_TIMEOUT = "idle_timeout";
 
-    // NEW v2.0 keys
-    public static final String KEY_APP_VERSION = "app_version";
-    public static final String KEY_ERROR_KEYWORDS = "error_keywords";
-    public static final String KEY_WATCHDOG_SEC = "watchdog_sec";
-    public static final String KEY_STOP_AT_COUNT = "stop_at_count";
-    public static final String KEY_VIBRATE = "vibrate_enabled";
-    public static final String KEY_FAST_MODE = "fast_mode";
-    public static final String KEY_EVENT_DRIVEN = "event_driven";
+    // v2 keys (new)
+    private static final String K_APP_VERSION = "app_version";
+    private static final String K_ERROR_KEYWORDS = "error_keywords";
+    private static final String K_WATCHDOG = "watchdog_sec";
+    private static final String K_STOP_AT = "stop_at_count";
+    private static final String K_VIBRATE = "vibrate_enabled";
+    private static final String K_FAST_MODE = "fast_mode";
+    private static final String K_EVENT_DRIVEN = "event_driven";
 
     // Defaults
-    public static final String DEFAULT_LIKE_TEXT = "إهتمام,اهتمام,إعجاب,اعجاب";
-    public static final String DEFAULT_YES_TEXT = "نعم,موافق,تأكيد,حسناً,حسنا";
-    public static final String DEFAULT_CLOSE_TEXT = "إغلاق,اغلاق,حسناً,حسنا,موافق,تم";
-    public static final String DEFAULT_TARGET_PACKAGE = "";
-    public static final String DEFAULT_PROFILE_KEYWORDS = "المؤهل التعليمي,الوزن,الطول,العمر,تاريخ الميلاد";
-    public static final int DEFAULT_SCAN_INTERVAL = 300;
-    public static final int DEFAULT_POPUP_WAIT = 1500;
-    public static final int DEFAULT_IDLE_TIMEOUT = 30;
+    private static final String DEF_LIKE = "إهتمام";
+    private static final String DEF_YES = "نعم";
+    private static final String DEF_CLOSE = "إغلاق";
+    private static final String DEF_TARGET_PKG = "";
+    private static final String DEF_PROFILE_KW = "المؤهل التعليمي,الوزن,الطول,تاريخ الميلاد,تاريخ التسجيل,مواصفات زوجي,إبلاغ";
+    private static final long DEF_SCAN_INTERVAL = 300;
+    private static final long DEF_POPUP_WAIT = 2000;
+    private static final long DEF_IDLE_TIMEOUT = 30; // seconds
+    private static final String DEF_ERROR_KEYWORDS = "مضاف سابقاً,مضاف سابقا,لا يمكن الإضافة,لا يمكن الاضافة,تم الإرسال مسبقاً,تم الارسال مسبقا";
+    private static final long DEF_WATCHDOG = 15; // seconds
+    private static final int DEF_STOP_AT = 0; // 0 = unlimited
+    private static final boolean DEF_VIBRATE = true;
+    private static final boolean DEF_FAST_MODE = false;
+    private static final boolean DEF_EVENT_DRIVEN = false; // OFF by default — safer
 
-    public static final String DEFAULT_ERROR_KEYWORDS = "مضاف سابقاً,مضاف سابقا,لا يمكن الإضافة,لا يمكن الاضافة,تم الإرسال مسبقاً,تم الارسال مسبقا,تم الإعجاب مسبقاً,أعجبك مسبقاً";
-    public static final int DEFAULT_WATCHDOG_SEC = 15;
-    public static final int DEFAULT_STOP_AT_COUNT = 0; // 0 = unlimited
-    public static final boolean DEFAULT_VIBRATE = true;
-    public static final boolean DEFAULT_FAST_MODE = false;
-    public static final boolean DEFAULT_EVENT_DRIVEN = true;
-
-    // ===== Broadcast actions for UI updates =====
-    public static final String ACTION_STATUS_UPDATE = "com.mokafeefah.clicker.STATUS_UPDATE";
-    public static final String EXTRA_EXEC_STATUS = "exec_status";
-    public static final String EXTRA_COUNTER = "counter";
-    public static final String EXTRA_LAST_ACTION = "last_action";
-
-    // ===== UI references =====
+    // Views
     private TextView serviceStatusText, execStatusText, counterText, lastActionText;
     private EditText inputLikeText, inputYesText, inputCloseText, inputTargetPackage;
     private EditText inputProfileKeywords, inputScanInterval, inputPopupWait, inputIdleTimeout;
     private EditText inputErrorKeywords, inputWatchdog, inputStopAt;
     private Switch switchEventDriven, switchFastMode, switchVibrate;
 
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-
-    private final BroadcastReceiver statusReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (intent == null) return;
-            String exec = intent.getStringExtra(EXTRA_EXEC_STATUS);
-            int counter = intent.getIntExtra(EXTRA_COUNTER, -1);
-            String lastAction = intent.getStringExtra(EXTRA_LAST_ACTION);
-            if (exec != null && execStatusText != null) execStatusText.setText(exec);
-            if (counter >= 0 && counterText != null) counterText.setText(String.valueOf(counter));
-            if (lastAction != null && lastActionText != null) lastActionText.setText(lastAction);
-        }
-    };
+    private SharedPreferences prefs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
-        // Stamp version in SharedPreferences (so external tools/data show "2.0")
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        prefs.edit().putString(KEY_APP_VERSION, APP_VERSION).apply();
-
+        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        // Stamp version
+        prefs.edit().putString(K_APP_VERSION, APP_VERSION).apply();
         bindViews();
-        loadSettings();
-        setupButtons();
-        setupAutoSave();
+        loadSavedValues();
+        wireButtons();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         refreshServiceStatus();
-        IntentFilter filter = new IntentFilter(ACTION_STATUS_UPDATE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(statusReceiver, filter);
+        ClickerService svc = ClickerService.getInstance();
+        if (svc != null) {
+            svc.setStatusListener((status, count, lastAction) ->
+                runOnUiThread(() -> updateLiveStatus(status, count, lastAction)));
         }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        try {
-            unregisterReceiver(statusReceiver);
-        } catch (Exception ignored) {}
-        saveSettings();
+        ClickerService svc = ClickerService.getInstance();
+        if (svc != null) svc.setStatusListener(null);
+        saveCurrentValues();
     }
 
     private void bindViews() {
@@ -157,138 +129,192 @@ public class MainActivity extends Activity {
         switchVibrate = findViewById(R.id.switchVibrate);
     }
 
-    private void loadSettings() {
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        inputLikeText.setText(prefs.getString(KEY_LIKE_TEXT, DEFAULT_LIKE_TEXT));
-        inputYesText.setText(prefs.getString(KEY_YES_TEXT, DEFAULT_YES_TEXT));
-        inputCloseText.setText(prefs.getString(KEY_CLOSE_TEXT, DEFAULT_CLOSE_TEXT));
-        inputTargetPackage.setText(prefs.getString(KEY_TARGET_PACKAGE, DEFAULT_TARGET_PACKAGE));
-        inputProfileKeywords.setText(prefs.getString(KEY_PROFILE_KEYWORDS, DEFAULT_PROFILE_KEYWORDS));
-        inputScanInterval.setText(String.valueOf(prefs.getInt(KEY_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)));
-        inputPopupWait.setText(String.valueOf(prefs.getInt(KEY_POPUP_WAIT, DEFAULT_POPUP_WAIT)));
-        inputIdleTimeout.setText(String.valueOf(prefs.getInt(KEY_IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT)));
-
-        inputErrorKeywords.setText(prefs.getString(KEY_ERROR_KEYWORDS, DEFAULT_ERROR_KEYWORDS));
-        inputWatchdog.setText(String.valueOf(prefs.getInt(KEY_WATCHDOG_SEC, DEFAULT_WATCHDOG_SEC)));
-        inputStopAt.setText(String.valueOf(prefs.getInt(KEY_STOP_AT_COUNT, DEFAULT_STOP_AT_COUNT)));
-        switchEventDriven.setChecked(prefs.getBoolean(KEY_EVENT_DRIVEN, DEFAULT_EVENT_DRIVEN));
-        switchFastMode.setChecked(prefs.getBoolean(KEY_FAST_MODE, DEFAULT_FAST_MODE));
-        switchVibrate.setChecked(prefs.getBoolean(KEY_VIBRATE, DEFAULT_VIBRATE));
-
-        counterText.setText(String.valueOf(prefs.getInt("counter", 0)));
-    }
-
-    private void saveSettings() {
-        SharedPreferences.Editor e = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit();
-        e.putString(KEY_LIKE_TEXT, inputLikeText.getText().toString().trim());
-        e.putString(KEY_YES_TEXT, inputYesText.getText().toString().trim());
-        e.putString(KEY_CLOSE_TEXT, inputCloseText.getText().toString().trim());
-        e.putString(KEY_TARGET_PACKAGE, inputTargetPackage.getText().toString().trim());
-        e.putString(KEY_PROFILE_KEYWORDS, inputProfileKeywords.getText().toString().trim());
-        e.putInt(KEY_SCAN_INTERVAL, parseIntOr(inputScanInterval.getText().toString(), DEFAULT_SCAN_INTERVAL));
-        e.putInt(KEY_POPUP_WAIT, parseIntOr(inputPopupWait.getText().toString(), DEFAULT_POPUP_WAIT));
-        e.putInt(KEY_IDLE_TIMEOUT, parseIntOr(inputIdleTimeout.getText().toString(), DEFAULT_IDLE_TIMEOUT));
-
-        e.putString(KEY_ERROR_KEYWORDS, inputErrorKeywords.getText().toString().trim());
-        e.putInt(KEY_WATCHDOG_SEC, parseIntOr(inputWatchdog.getText().toString(), DEFAULT_WATCHDOG_SEC));
-        e.putInt(KEY_STOP_AT_COUNT, parseIntOr(inputStopAt.getText().toString(), DEFAULT_STOP_AT_COUNT));
-        e.putBoolean(KEY_EVENT_DRIVEN, switchEventDriven.isChecked());
-        e.putBoolean(KEY_FAST_MODE, switchFastMode.isChecked());
-        e.putBoolean(KEY_VIBRATE, switchVibrate.isChecked());
-
-        e.putString(KEY_APP_VERSION, APP_VERSION);
-        e.apply();
-    }
-
-    private void setupAutoSave() {
-        // Save on every switch toggle so service reads fresh values
-        switchEventDriven.setOnCheckedChangeListener((v, c) -> saveSettings());
-        switchFastMode.setOnCheckedChangeListener((v, c) -> saveSettings());
-        switchVibrate.setOnCheckedChangeListener((v, c) -> saveSettings());
-    }
-
-    private int parseIntOr(String s, int def) {
-        try {
-            int v = Integer.parseInt(s.trim());
-            return Math.max(0, v);
-        } catch (Exception e) {
-            return def;
-        }
-    }
-
-    private void setupButtons() {
+    private void wireButtons() {
         Button btnStart = findViewById(R.id.btnStart);
         Button btnStop = findViewById(R.id.btnStop);
         Button btnOpenAcc = findViewById(R.id.btnOpenAccessibility);
         Button btnReset = findViewById(R.id.btnReset);
-
-        btnStart.setOnClickListener(v -> {
-            if (!isServiceEnabled()) {
-                Toast.makeText(this, R.string.msg_service_off, Toast.LENGTH_LONG).show();
-                return;
-            }
-            if (!validateInputs()) {
-                Toast.makeText(this, R.string.msg_invalid_input, Toast.LENGTH_LONG).show();
-                return;
-            }
-            saveSettings();
-            sendCommand(ClickerService.CMD_START);
-            Toast.makeText(this, R.string.msg_started, Toast.LENGTH_LONG).show();
-        });
-
-        btnStop.setOnClickListener(v -> {
-            sendCommand(ClickerService.CMD_STOP);
-            Toast.makeText(this, R.string.msg_stopped, Toast.LENGTH_SHORT).show();
-            mainHandler.postDelayed(() -> execStatusText.setText(R.string.exec_status_stopped), 200);
-        });
-
-        btnOpenAcc.setOnClickListener(v -> {
-            try {
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-            } catch (Exception ignored) {}
-        });
-
-        btnReset.setOnClickListener(v -> {
-            resetDefaults();
-            loadSettings();
-            saveSettings();
-            Toast.makeText(this, R.string.msg_reset_done, Toast.LENGTH_SHORT).show();
-        });
-    }
-
-    private void resetDefaults() {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().clear()
-            .putString(KEY_APP_VERSION, APP_VERSION)
-            .apply();
-    }
-
-    private boolean validateInputs() {
-        return !TextUtils.isEmpty(inputLikeText.getText().toString().trim())
-            && !TextUtils.isEmpty(inputYesText.getText().toString().trim())
-            && !TextUtils.isEmpty(inputCloseText.getText().toString().trim());
-    }
-
-    private void sendCommand(String cmd) {
-        Intent i = new Intent(this, ClickerService.class);
-        i.setAction(cmd);
-        try { startService(i); } catch (Exception ignored) {}
+        btnStart.setOnClickListener(v -> onStartClicked());
+        btnStop.setOnClickListener(v -> onStopClicked());
+        btnOpenAcc.setOnClickListener(v -> openAccessibilitySettings());
+        btnReset.setOnClickListener(v -> resetDefaults());
     }
 
     private void refreshServiceStatus() {
-        boolean enabled = isServiceEnabled();
-        serviceStatusText.setText(enabled ? R.string.service_status_enabled : R.string.service_status_disabled);
+        boolean enabled = isAccessibilityServiceEnabled();
+        String text = getString(enabled ? R.string.service_status_enabled : R.string.service_status_disabled);
+        serviceStatusText.setText(text);
+        serviceStatusText.setContentDescription(text);
         serviceStatusText.setTextColor(getResources().getColor(enabled ? R.color.success : R.color.error));
     }
 
-    private boolean isServiceEnabled() {
+    private boolean isAccessibilityServiceEnabled() {
         AccessibilityManager am = (AccessibilityManager) getSystemService(Context.ACCESSIBILITY_SERVICE);
         if (am == null) return false;
         List<AccessibilityServiceInfo> list = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
-        String me = getPackageName();
-        for (AccessibilityServiceInfo info : list) {
-            String id = info.getId();
-            if (id != null && id.toLowerCase().contains(me.toLowerCase())) return true;
+        String me = getPackageName().toLowerCase();
+        if (list != null) {
+            for (AccessibilityServiceInfo info : list) {
+                String id = info.getId();
+                if (id != null && id.toLowerCase().contains(me)) return true;
+            }
         }
-        return false;
+        return ClickerService.isServiceRunning();
+    }
+
+    private void updateLiveStatus(String status, int count, String lastAction) {
+        String prev = execStatusText.getText() == null ? "" : execStatusText.getText().toString();
+        execStatusText.setText(status);
+        execStatusText.setContentDescription(status);
+        counterText.setText(String.valueOf(count));
+        counterText.setContentDescription(getString(R.string.counter_label) + ": " + count);
+        if (lastAction != null && !lastAction.isEmpty()) {
+            lastActionText.setText(lastAction);
+            lastActionText.setContentDescription(lastAction);
+        }
+        if (ClickerService.STATUS_AUTO_STOPPED.equals(status)
+            && !ClickerService.STATUS_AUTO_STOPPED.equals(prev)) {
+            toast(getString(R.string.msg_auto_stopped));
+        }
+    }
+
+    private void onStartClicked() {
+        ClickerService svc = ClickerService.getInstance();
+        if (svc == null) { toast(getString(R.string.msg_service_off)); return; }
+        if (svc.isExecuting()) { toast(getString(R.string.msg_already_running)); return; }
+
+        String like = textOf(inputLikeText);
+        String yes = textOf(inputYesText);
+        String close = textOf(inputCloseText);
+        String pkg = textOf(inputTargetPackage);
+        String kwRaw = textOf(inputProfileKeywords);
+        String errRaw = textOf(inputErrorKeywords);
+        Long interval = parseLong(inputScanInterval);
+        Long popupWait = parseLong(inputPopupWait);
+        Long idleSecs = parseLong(inputIdleTimeout);
+        Long watchdogSecs = parseLong(inputWatchdog);
+        Long stopAt = parseLong(inputStopAt);
+
+        if (like.isEmpty() || yes.isEmpty() || close.isEmpty()
+            || interval == null || interval < 150
+            || popupWait == null || popupWait < 300
+            || idleSecs == null || idleSecs < 5) {
+            toast(getString(R.string.msg_invalid_input));
+            return;
+        }
+        long watchdog = (watchdogSecs == null || watchdogSecs < 5) ? DEF_WATCHDOG : watchdogSecs;
+        int stopAtCount = (stopAt == null) ? 0 : Math.max(0, stopAt.intValue());
+
+        List<String> profileKw = splitCsv(kwRaw);
+        List<String> errorKw = splitCsv(errRaw);
+
+        saveCurrentValues();
+
+        ClickerService.BotConfig cfg = new ClickerService.BotConfig(
+            like, yes, close, pkg,
+            profileKw, errorKw,
+            interval, popupWait, idleSecs * 1000L,
+            watchdog * 1000L, stopAtCount,
+            switchVibrate.isChecked(),
+            switchFastMode.isChecked(),
+            switchEventDriven.isChecked()
+        );
+        boolean ok = svc.startBot(cfg);
+        toast(getString(ok ? R.string.msg_started : R.string.msg_already_running));
+    }
+
+    private void onStopClicked() {
+        ClickerService svc = ClickerService.getInstance();
+        if (svc == null) { toast(getString(R.string.msg_service_off)); return; }
+        svc.stopBot();
+        toast(getString(R.string.msg_stopped));
+    }
+
+    private void openAccessibilitySettings() {
+        Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try { startActivity(intent); } catch (Exception ignored) {}
+    }
+
+    private void resetDefaults() {
+        inputLikeText.setText(DEF_LIKE);
+        inputYesText.setText(DEF_YES);
+        inputCloseText.setText(DEF_CLOSE);
+        inputTargetPackage.setText(DEF_TARGET_PKG);
+        inputProfileKeywords.setText(DEF_PROFILE_KW);
+        inputScanInterval.setText(String.valueOf(DEF_SCAN_INTERVAL));
+        inputPopupWait.setText(String.valueOf(DEF_POPUP_WAIT));
+        inputIdleTimeout.setText(String.valueOf(DEF_IDLE_TIMEOUT));
+        inputErrorKeywords.setText(DEF_ERROR_KEYWORDS);
+        inputWatchdog.setText(String.valueOf(DEF_WATCHDOG));
+        inputStopAt.setText(String.valueOf(DEF_STOP_AT));
+        switchEventDriven.setChecked(DEF_EVENT_DRIVEN);
+        switchFastMode.setChecked(DEF_FAST_MODE);
+        switchVibrate.setChecked(DEF_VIBRATE);
+        saveCurrentValues();
+        toast(getString(R.string.msg_reset_done));
+    }
+
+    private void loadSavedValues() {
+        inputLikeText.setText(prefs.getString(K_LIKE_TEXT, DEF_LIKE));
+        inputYesText.setText(prefs.getString(K_YES_TEXT, DEF_YES));
+        inputCloseText.setText(prefs.getString(K_CLOSE_TEXT, DEF_CLOSE));
+        inputTargetPackage.setText(prefs.getString(K_TARGET_PKG, DEF_TARGET_PKG));
+        inputProfileKeywords.setText(prefs.getString(K_PROFILE_KW, DEF_PROFILE_KW));
+        inputScanInterval.setText(String.valueOf(prefs.getLong(K_SCAN_INTERVAL, DEF_SCAN_INTERVAL)));
+        inputPopupWait.setText(String.valueOf(prefs.getLong(K_POPUP_WAIT, DEF_POPUP_WAIT)));
+        inputIdleTimeout.setText(String.valueOf(prefs.getLong(K_IDLE_TIMEOUT, DEF_IDLE_TIMEOUT)));
+        inputErrorKeywords.setText(prefs.getString(K_ERROR_KEYWORDS, DEF_ERROR_KEYWORDS));
+        inputWatchdog.setText(String.valueOf(prefs.getLong(K_WATCHDOG, DEF_WATCHDOG)));
+        inputStopAt.setText(String.valueOf(prefs.getInt(K_STOP_AT, DEF_STOP_AT)));
+        switchEventDriven.setChecked(prefs.getBoolean(K_EVENT_DRIVEN, DEF_EVENT_DRIVEN));
+        switchFastMode.setChecked(prefs.getBoolean(K_FAST_MODE, DEF_FAST_MODE));
+        switchVibrate.setChecked(prefs.getBoolean(K_VIBRATE, DEF_VIBRATE));
+    }
+
+    private void saveCurrentValues() {
+        SharedPreferences.Editor e = prefs.edit();
+        e.putString(K_LIKE_TEXT, textOf(inputLikeText));
+        e.putString(K_YES_TEXT, textOf(inputYesText));
+        e.putString(K_CLOSE_TEXT, textOf(inputCloseText));
+        e.putString(K_TARGET_PKG, textOf(inputTargetPackage));
+        e.putString(K_PROFILE_KW, textOf(inputProfileKeywords));
+        e.putString(K_ERROR_KEYWORDS, textOf(inputErrorKeywords));
+        Long iv = parseLong(inputScanInterval); if (iv != null) e.putLong(K_SCAN_INTERVAL, iv);
+        Long pw = parseLong(inputPopupWait); if (pw != null) e.putLong(K_POPUP_WAIT, pw);
+        Long it = parseLong(inputIdleTimeout); if (it != null) e.putLong(K_IDLE_TIMEOUT, it);
+        Long wd = parseLong(inputWatchdog); if (wd != null) e.putLong(K_WATCHDOG, wd);
+        Long sa = parseLong(inputStopAt); if (sa != null) e.putInt(K_STOP_AT, sa.intValue());
+        e.putBoolean(K_EVENT_DRIVEN, switchEventDriven.isChecked());
+        e.putBoolean(K_FAST_MODE, switchFastMode.isChecked());
+        e.putBoolean(K_VIBRATE, switchVibrate.isChecked());
+        e.putString(K_APP_VERSION, APP_VERSION);
+        e.apply();
+    }
+
+    private String textOf(EditText et) {
+        return et == null ? "" : et.getText().toString().trim();
+    }
+
+    private Long parseLong(EditText et) {
+        String s = textOf(et);
+        if (TextUtils.isEmpty(s)) return null;
+        try { return Long.parseLong(s); } catch (NumberFormatException e) { return null; }
+    }
+
+    private List<String> splitCsv(String s) {
+        List<String> out = new ArrayList<>();
+        if (s == null || s.isEmpty()) return out;
+        for (String part : s.split("[\u060c,]")) {
+            String t = part.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
+    private void toast(String text) {
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show();
+        View root = findViewById(android.R.id.content);
+        if (root != null) root.announceForAccessibility(text);
     }
 }

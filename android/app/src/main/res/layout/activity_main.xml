@@ -14,14 +14,12 @@
 
         <!-- Header -->
         <TextView
-            android:id="@+id/headerTitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/header_title"
             android:textSize="22sp"
             android:textStyle="bold"
             android:textColor="@color/primary"
-            android:gravity="start"
             android:paddingBottom="6dp"
             android:accessibilityHeading="true" />
 
@@ -33,7 +31,7 @@
             android:textColor="@color/text_secondary"
             android:paddingBottom="20dp" />
 
-        <!-- ============ Status Section ============ -->
+        <!-- ===== Status Section ===== -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -49,9 +47,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/service_status_label"
-            android:textSize="15sp"
-            android:textColor="@color/text_secondary" />
-
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp" />
         <TextView
             android:id="@+id/serviceStatusText"
             android:layout_width="match_parent"
@@ -72,11 +69,54 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/exec_status_label"
-            android:textSize="15sp"
-            android:textColor="@color/text_secondary" />
-
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp" />
         <TextView
             android:id="@+id/execStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:padding="14dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="14dp"
+            android:background="@color/surface"
+            android:textColor="@color/text_primary"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:text="@string/exec_status_idle"
+            android:accessibilityLiveRegion="polite" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/counter_label"
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp" />
+        <TextView
+            android:id="@+id/counterText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:padding="14dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="14dp"
+            android:background="@color/surface"
+            android:textColor="@color/success"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:text="0"
+            android:accessibilityLiveRegion="polite" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/last_action_label"
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp" />
+        <TextView
+            android:id="@+id/lastActionText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="48dp"
@@ -86,267 +126,139 @@
             android:layout_marginBottom="20dp"
             android:background="@color/surface"
             android:textColor="@color/text_primary"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            android:text="@string/exec_status_idle"
+            android:textSize="16sp"
+            android:text="@string/last_action_none"
             android:accessibilityLiveRegion="polite" />
 
-        <!-- ============ Coordinates Section ============ -->
+        <!-- ===== Configuration Section ===== -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/section_coords"
+            android:text="@string/section_config"
             android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="@color/accent"
             android:paddingTop="8dp"
-            android:paddingBottom="8dp"
+            android:paddingBottom="6dp"
             android:accessibilityHeading="true" />
 
         <TextView
-            android:labelFor="@+id/inputLikeX"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/label_like_x"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:paddingTop="8dp" />
-        <EditText
-            android:id="@+id/inputLikeX"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_coord"
-            android:textSize="18sp"
-            android:contentDescription="@string/label_like_x" />
-
-        <TextView
-            android:labelFor="@+id/inputLikeY"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/label_like_y"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:paddingTop="8dp" />
-        <EditText
-            android:id="@+id/inputLikeY"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_coord"
-            android:textSize="18sp"
-            android:contentDescription="@string/label_like_y" />
-
-        <TextView
-            android:labelFor="@+id/inputYesX"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/label_yes_x"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:paddingTop="8dp" />
-        <EditText
-            android:id="@+id/inputYesX"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_coord"
-            android:textSize="18sp"
-            android:contentDescription="@string/label_yes_x" />
-
-        <TextView
-            android:labelFor="@+id/inputYesY"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/label_yes_y"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:paddingTop="8dp" />
-        <EditText
-            android:id="@+id/inputYesY"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_coord"
-            android:textSize="18sp"
-            android:contentDescription="@string/label_yes_y" />
-
-        <!-- Close button coordinates (NEW) -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/close_hint"
+            android:text="@string/config_hint"
             android:textColor="@color/text_secondary"
             android:textSize="13sp"
-            android:paddingTop="14dp"
-            android:paddingBottom="4dp" />
+            android:paddingBottom="14dp" />
 
         <TextView
-            android:labelFor="@+id/inputCloseX"
+            android:labelFor="@+id/inputLikeText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/label_close_x"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:paddingTop="4dp" />
-        <EditText
-            android:id="@+id/inputCloseX"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_coord"
-            android:textSize="18sp"
-            android:contentDescription="@string/label_close_x" />
-
-        <TextView
-            android:labelFor="@+id/inputCloseY"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/label_close_y"
+            android:text="@string/label_like_text"
             android:textColor="@color/text_primary"
             android:textSize="15sp"
             android:paddingTop="8dp" />
         <EditText
-            android:id="@+id/inputCloseY"
+            android:id="@+id/inputLikeText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_coord"
+            android:inputType="text"
+            android:hint="@string/hint_like_text"
             android:textSize="18sp"
-            android:contentDescription="@string/label_close_y" />
-
-        <!-- ============ Timing Section ============ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/section_timing"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:textColor="@color/accent"
-            android:paddingTop="20dp"
-            android:paddingBottom="8dp"
-            android:accessibilityHeading="true" />
+            android:contentDescription="@string/label_like_text" />
 
         <TextView
-            android:labelFor="@+id/inputDelayLike"
+            android:labelFor="@+id/inputYesText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/label_delay_after_like"
+            android:text="@string/label_yes_text"
             android:textColor="@color/text_primary"
             android:textSize="15sp"
             android:paddingTop="8dp" />
         <EditText
-            android:id="@+id/inputDelayLike"
+            android:id="@+id/inputYesText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_delay_1s"
+            android:inputType="text"
+            android:hint="@string/hint_yes_text"
             android:textSize="18sp"
-            android:contentDescription="@string/label_delay_after_like" />
+            android:contentDescription="@string/label_yes_text" />
 
         <TextView
-            android:labelFor="@+id/inputDelayYes"
+            android:labelFor="@+id/inputCloseText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/label_delay_after_yes"
+            android:text="@string/label_close_text"
             android:textColor="@color/text_primary"
             android:textSize="15sp"
             android:paddingTop="8dp" />
         <EditText
-            android:id="@+id/inputDelayYes"
+            android:id="@+id/inputCloseText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_delay_2s"
+            android:inputType="text"
+            android:hint="@string/hint_close_text"
             android:textSize="18sp"
-            android:contentDescription="@string/label_delay_after_yes" />
+            android:contentDescription="@string/label_close_text" />
 
         <TextView
-            android:labelFor="@+id/inputDelayClose"
+            android:labelFor="@+id/inputTargetPackage"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/label_delay_after_close"
+            android:text="@string/label_target_package"
             android:textColor="@color/text_primary"
             android:textSize="15sp"
-            android:paddingTop="8dp" />
+            android:paddingTop="16dp" />
         <EditText
-            android:id="@+id/inputDelayClose"
+            android:id="@+id/inputTargetPackage"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_delay_1s"
-            android:textSize="18sp"
-            android:contentDescription="@string/label_delay_after_close" />
-
-        <TextView
-            android:labelFor="@+id/inputRepeat"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/label_repeat"
-            android:textColor="@color/text_primary"
-            android:textSize="15sp"
-            android:paddingTop="8dp" />
-        <EditText
-            android:id="@+id/inputRepeat"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:inputType="number"
-            android:hint="@string/hint_repeat"
-            android:textSize="18sp"
-            android:contentDescription="@string/label_repeat" />
-
-        <!-- ============ Scroll Section ============ -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/section_scroll"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:textColor="@color/accent"
-            android:paddingTop="20dp"
-            android:paddingBottom="8dp"
-            android:accessibilityHeading="true" />
-
-        <CheckBox
-            android:id="@+id/checkScroll"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:text="@string/label_scroll"
-            android:textColor="@color/text_primary"
+            android:inputType="text"
+            android:hint="@string/hint_target_package"
             android:textSize="16sp"
-            android:buttonTint="@color/primary"
-            android:contentDescription="@string/label_scroll" />
+            android:contentDescription="@string/label_target_package" />
 
         <TextView
-            android:labelFor="@+id/inputScrollDistance"
+            android:labelFor="@+id/inputProfileKeywords"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/label_scroll_distance"
+            android:text="@string/label_profile_keywords"
             android:textColor="@color/text_primary"
             android:textSize="15sp"
-            android:paddingTop="8dp" />
+            android:paddingTop="16dp" />
         <EditText
-            android:id="@+id/inputScrollDistance"
+            android:id="@+id/inputProfileKeywords"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="56dp"
+            android:inputType="text"
+            android:hint="@string/hint_profile_keywords"
+            android:textSize="16sp"
+            android:contentDescription="@string/label_profile_keywords" />
+
+        <TextView
+            android:labelFor="@+id/inputScanInterval"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_scan_interval"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp"
+            android:paddingTop="16dp" />
+        <EditText
+            android:id="@+id/inputScanInterval"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="56dp"
             android:inputType="number"
-            android:hint="@string/hint_scroll_distance"
+            android:hint="@string/hint_scan_interval"
             android:textSize="18sp"
-            android:contentDescription="@string/label_scroll_distance" />
+            android:contentDescription="@string/label_scan_interval" />
 
-        <!-- ============ Actions Section ============ -->
+        <!-- ===== Actions Section ===== -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -354,7 +266,7 @@
             android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="@color/accent"
-            android:paddingTop="24dp"
+            android:paddingTop="28dp"
             android:paddingBottom="12dp"
             android:accessibilityHeading="true" />
 
@@ -383,42 +295,6 @@
             android:textColor="@color/text_primary"
             android:layout_marginBottom="12dp"
             android:contentDescription="@string/btn_stop" />
-
-        <Button
-            android:id="@+id/btnTestLike"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:text="@string/btn_test_like"
-            android:textSize="17sp"
-            android:backgroundTint="@color/surface_elevated"
-            android:textColor="@color/text_primary"
-            android:layout_marginBottom="12dp"
-            android:contentDescription="@string/btn_test_like" />
-
-        <Button
-            android:id="@+id/btnTestYes"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:text="@string/btn_test_yes"
-            android:textSize="17sp"
-            android:backgroundTint="@color/surface_elevated"
-            android:textColor="@color/text_primary"
-            android:layout_marginBottom="12dp"
-            android:contentDescription="@string/btn_test_yes" />
-
-        <Button
-            android:id="@+id/btnTestClose"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="56dp"
-            android:text="@string/btn_test_close"
-            android:textSize="17sp"
-            android:backgroundTint="@color/surface_elevated"
-            android:textColor="@color/text_primary"
-            android:layout_marginBottom="12dp"
-            android:contentDescription="@string/btn_test_close" />
 
         <Button
             android:id="@+id/btnOpenAccessibility"

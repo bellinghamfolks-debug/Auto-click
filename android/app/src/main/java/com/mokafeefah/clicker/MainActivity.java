@@ -8,55 +8,39 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * الشاشة الرئيسية لتطبيق "مكفوف كليكر".
- * تتيح للمستخدم إدخال إحداثيات الأزرار (إعجاب، نعم، إغلاق)،
- * 3 مدد انتظار منفصلة، مسافة التمرير، عدد التكرار، وإصدار الأوامر.
+ * الشاشة الرئيسية - تتيح ضبط نصوص الأزرار التي يبحث عنها البوت.
+ * لا توجد إحداثيات X/Y بعد الآن - الذكاء كله مبني على تحليل شجرة الشاشة.
  */
 public class MainActivity extends AppCompatActivity {
 
-    private static final String PREFS = "mokafeefah_prefs";
-    // مفاتيح التخزين
-    private static final String K_LIKE_X = "like_x";
-    private static final String K_LIKE_Y = "like_y";
-    private static final String K_YES_X = "yes_x";
-    private static final String K_YES_Y = "yes_y";
-    private static final String K_CLOSE_X = "close_x";
-    private static final String K_CLOSE_Y = "close_y";
-    private static final String K_DELAY_LIKE = "delay_like";
-    private static final String K_DELAY_YES = "delay_yes";
-    private static final String K_DELAY_CLOSE = "delay_close";
-    private static final String K_REPEAT = "repeat";
-    private static final String K_SCROLL = "scroll";
-    private static final String K_SCROLL_DIST = "scroll_distance";
+    private static final String PREFS = "mokafeefah_prefs_v2";
+    private static final String K_LIKE_TEXT = "like_text";
+    private static final String K_YES_TEXT = "yes_text";
+    private static final String K_CLOSE_TEXT = "close_text";
+    private static final String K_TARGET_PKG = "target_pkg";
+    private static final String K_PROFILE_KW = "profile_keywords";
+    private static final String K_SCAN_INTERVAL = "scan_interval";
 
-    // قيم افتراضية - مناسبة لشاشة 1080x2400 تقريبًا
-    private static final int DEF_LIKE_X = 540;
-    private static final int DEF_LIKE_Y = 1500;
-    private static final int DEF_YES_X = 540;
-    private static final int DEF_YES_Y = 1200;
-    private static final int DEF_CLOSE_X = 540;
-    private static final int DEF_CLOSE_Y = 1800;
-    private static final long DEF_DELAY_LIKE = 1000L;   // 1 ثانية بعد الإعجاب
-    private static final long DEF_DELAY_YES = 2000L;    // 2 ثانية بعد نعم
-    private static final long DEF_DELAY_CLOSE = 1000L;  // 1 ثانية بعد الإغلاق
-    private static final int DEF_REPEAT = 5;
-    private static final boolean DEF_SCROLL = false;
-    private static final int DEF_SCROLL_DIST = 600;
+    private static final String DEF_LIKE = "إهتمام";
+    private static final String DEF_YES = "نعم";
+    private static final String DEF_CLOSE = "إغلاق";
+    private static final String DEF_TARGET_PKG = "";
+    private static final String DEF_PROFILE_KW = "المؤهل التعليمي,الوزن,الطول,تاريخ الميلاد";
+    private static final long DEF_SCAN_INTERVAL = 300L;
 
-    private EditText inputLikeX, inputLikeY, inputYesX, inputYesY,
-            inputCloseX, inputCloseY,
-            inputDelayLike, inputDelayYes, inputDelayClose,
-            inputRepeat, inputScrollDistance;
-    private CheckBox checkScroll;
-    private TextView serviceStatusText, execStatusText;
+    private EditText inputLikeText, inputYesText, inputCloseText,
+            inputTargetPackage, inputProfileKeywords, inputScanInterval;
+    private TextView serviceStatusText, execStatusText, counterText, lastActionText;
     private SharedPreferences prefs;
 
     @Override
@@ -70,36 +54,26 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void bindViews() {
-        inputLikeX = findViewById(R.id.inputLikeX);
-        inputLikeY = findViewById(R.id.inputLikeY);
-        inputYesX = findViewById(R.id.inputYesX);
-        inputYesY = findViewById(R.id.inputYesY);
-        inputCloseX = findViewById(R.id.inputCloseX);
-        inputCloseY = findViewById(R.id.inputCloseY);
-        inputDelayLike = findViewById(R.id.inputDelayLike);
-        inputDelayYes = findViewById(R.id.inputDelayYes);
-        inputDelayClose = findViewById(R.id.inputDelayClose);
-        inputRepeat = findViewById(R.id.inputRepeat);
-        inputScrollDistance = findViewById(R.id.inputScrollDistance);
-        checkScroll = findViewById(R.id.checkScroll);
+        inputLikeText = findViewById(R.id.inputLikeText);
+        inputYesText = findViewById(R.id.inputYesText);
+        inputCloseText = findViewById(R.id.inputCloseText);
+        inputTargetPackage = findViewById(R.id.inputTargetPackage);
+        inputProfileKeywords = findViewById(R.id.inputProfileKeywords);
+        inputScanInterval = findViewById(R.id.inputScanInterval);
         serviceStatusText = findViewById(R.id.serviceStatusText);
         execStatusText = findViewById(R.id.execStatusText);
+        counterText = findViewById(R.id.counterText);
+        lastActionText = findViewById(R.id.lastActionText);
     }
 
     private void wireButtons() {
         Button btnStart = findViewById(R.id.btnStart);
         Button btnStop = findViewById(R.id.btnStop);
-        Button btnTestLike = findViewById(R.id.btnTestLike);
-        Button btnTestYes = findViewById(R.id.btnTestYes);
-        Button btnTestClose = findViewById(R.id.btnTestClose);
         Button btnOpenAcc = findViewById(R.id.btnOpenAccessibility);
         Button btnReset = findViewById(R.id.btnReset);
 
         btnStart.setOnClickListener(v -> onStartClicked());
         btnStop.setOnClickListener(v -> onStopClicked());
-        btnTestLike.setOnClickListener(v -> onTestClicked(TestTarget.LIKE));
-        btnTestYes.setOnClickListener(v -> onTestClicked(TestTarget.YES));
-        btnTestClose.setOnClickListener(v -> onTestClicked(TestTarget.CLOSE));
         btnOpenAcc.setOnClickListener(v -> openAccessibilitySettings());
         btnReset.setOnClickListener(v -> resetDefaults());
     }
@@ -110,8 +84,8 @@ public class MainActivity extends AppCompatActivity {
         refreshServiceStatus();
         ClickerService svc = ClickerService.getInstance();
         if (svc != null) {
-            svc.setStatusListener((status, current, total) ->
-                    runOnUiThread(() -> updateExecStatus(status, current, total)));
+            svc.setStatusListener((status, count, lastAction) ->
+                    runOnUiThread(() -> updateLiveStatus(status, count, lastAction)));
         }
     }
 
@@ -130,18 +104,17 @@ public class MainActivity extends AppCompatActivity {
                 : getString(R.string.service_status_disabled);
         serviceStatusText.setText(text);
         serviceStatusText.setContentDescription(text);
-        serviceStatusText.announceForAccessibility(text);
     }
 
-    private void updateExecStatus(String status, int current, int total) {
-        String text;
-        if (ClickerService.STATUS_RUNNING.equals(status) && total > 0) {
-            text = getString(R.string.exec_status_running_progress, current, total);
-        } else {
-            text = status;
+    private void updateLiveStatus(String status, int count, String lastAction) {
+        execStatusText.setText(status);
+        execStatusText.setContentDescription(status);
+        counterText.setText(String.valueOf(count));
+        counterText.setContentDescription(getString(R.string.counter_label) + ": " + count);
+        if (lastAction != null && !lastAction.isEmpty()) {
+            lastActionText.setText(lastAction);
+            lastActionText.setContentDescription(lastAction);
         }
-        execStatusText.setText(text);
-        execStatusText.setContentDescription(text);
     }
 
     private void onStartClicked() {
@@ -154,35 +127,31 @@ public class MainActivity extends AppCompatActivity {
             toast(getString(R.string.msg_already_running));
             return;
         }
-        Integer lx = parseInt(inputLikeX);
-        Integer ly = parseInt(inputLikeY);
-        Integer yx = parseInt(inputYesX);
-        Integer yy = parseInt(inputYesY);
-        Integer cx = parseInt(inputCloseX);
-        Integer cy = parseInt(inputCloseY);
-        Long dLike = parseLong(inputDelayLike);
-        Long dYes = parseLong(inputDelayYes);
-        Long dClose = parseLong(inputDelayClose);
-        Integer repeat = parseInt(inputRepeat);
-        Integer scrollDist = parseInt(inputScrollDistance);
 
-        if (lx == null || ly == null || yx == null || yy == null
-                || cx == null || cy == null
-                || dLike == null || dYes == null || dClose == null
-                || repeat == null || scrollDist == null
-                || lx < 0 || ly < 0 || yx < 0 || yy < 0 || cx < 0 || cy < 0
-                || dLike < 100L || dYes < 100L || dClose < 100L
-                || repeat < 1 || scrollDist < 50) {
+        String like = textOf(inputLikeText);
+        String yes = textOf(inputYesText);
+        String close = textOf(inputCloseText);
+        String pkg = textOf(inputTargetPackage);
+        String kwRaw = textOf(inputProfileKeywords);
+        Long interval = parseLong(inputScanInterval);
+
+        if (like.isEmpty() || yes.isEmpty() || close.isEmpty() || interval == null || interval < 150L) {
             toast(getString(R.string.msg_invalid_input));
             return;
         }
 
+        List<String> keywords = new ArrayList<>();
+        if (!kwRaw.isEmpty()) {
+            for (String part : kwRaw.split("[،,]")) {
+                String t = part.trim();
+                if (!t.isEmpty()) keywords.add(t);
+            }
+        }
+
         saveCurrentValues();
-        ClickerService.SequenceConfig cfg = new ClickerService.SequenceConfig(
-                lx, ly, yx, yy, cx, cy,
-                dLike, dYes, dClose,
-                repeat, checkScroll.isChecked(), scrollDist);
-        boolean ok = svc.startSequence(cfg);
+        ClickerService.BotConfig cfg = new ClickerService.BotConfig(
+                like, yes, close, pkg, keywords, interval);
+        boolean ok = svc.startBot(cfg);
         toast(ok ? getString(R.string.msg_started) : getString(R.string.msg_already_running));
     }
 
@@ -192,38 +161,8 @@ public class MainActivity extends AppCompatActivity {
             toast(getString(R.string.msg_service_off));
             return;
         }
-        svc.stopSequence();
+        svc.stopBot();
         toast(getString(R.string.msg_stopped));
-    }
-
-    private enum TestTarget { LIKE, YES, CLOSE }
-
-    private void onTestClicked(TestTarget target) {
-        ClickerService svc = ClickerService.getInstance();
-        if (svc == null) {
-            toast(getString(R.string.msg_service_off));
-            return;
-        }
-        Integer x, y;
-        int doneMsg;
-        switch (target) {
-            case LIKE:
-                x = parseInt(inputLikeX); y = parseInt(inputLikeY);
-                doneMsg = R.string.msg_test_like_done; break;
-            case YES:
-                x = parseInt(inputYesX); y = parseInt(inputYesY);
-                doneMsg = R.string.msg_test_yes_done; break;
-            case CLOSE:
-            default:
-                x = parseInt(inputCloseX); y = parseInt(inputCloseY);
-                doneMsg = R.string.msg_test_close_done; break;
-        }
-        if (x == null || y == null || x < 0 || y < 0) {
-            toast(getString(R.string.msg_invalid_input));
-            return;
-        }
-        boolean ok = svc.performSingleClick(x, y);
-        toast(getString(ok ? doneMsg : R.string.msg_test_failed));
     }
 
     private void openAccessibilitySettings() {
@@ -233,63 +172,43 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void resetDefaults() {
-        inputLikeX.setText(String.valueOf(DEF_LIKE_X));
-        inputLikeY.setText(String.valueOf(DEF_LIKE_Y));
-        inputYesX.setText(String.valueOf(DEF_YES_X));
-        inputYesY.setText(String.valueOf(DEF_YES_Y));
-        inputCloseX.setText(String.valueOf(DEF_CLOSE_X));
-        inputCloseY.setText(String.valueOf(DEF_CLOSE_Y));
-        inputDelayLike.setText(String.valueOf(DEF_DELAY_LIKE));
-        inputDelayYes.setText(String.valueOf(DEF_DELAY_YES));
-        inputDelayClose.setText(String.valueOf(DEF_DELAY_CLOSE));
-        inputRepeat.setText(String.valueOf(DEF_REPEAT));
-        inputScrollDistance.setText(String.valueOf(DEF_SCROLL_DIST));
-        checkScroll.setChecked(DEF_SCROLL);
+        inputLikeText.setText(DEF_LIKE);
+        inputYesText.setText(DEF_YES);
+        inputCloseText.setText(DEF_CLOSE);
+        inputTargetPackage.setText(DEF_TARGET_PKG);
+        inputProfileKeywords.setText(DEF_PROFILE_KW);
+        inputScanInterval.setText(String.valueOf(DEF_SCAN_INTERVAL));
         saveCurrentValues();
         toast(getString(R.string.msg_reset_done));
     }
 
     private void loadSavedValues() {
-        inputLikeX.setText(String.valueOf(prefs.getInt(K_LIKE_X, DEF_LIKE_X)));
-        inputLikeY.setText(String.valueOf(prefs.getInt(K_LIKE_Y, DEF_LIKE_Y)));
-        inputYesX.setText(String.valueOf(prefs.getInt(K_YES_X, DEF_YES_X)));
-        inputYesY.setText(String.valueOf(prefs.getInt(K_YES_Y, DEF_YES_Y)));
-        inputCloseX.setText(String.valueOf(prefs.getInt(K_CLOSE_X, DEF_CLOSE_X)));
-        inputCloseY.setText(String.valueOf(prefs.getInt(K_CLOSE_Y, DEF_CLOSE_Y)));
-        inputDelayLike.setText(String.valueOf(prefs.getLong(K_DELAY_LIKE, DEF_DELAY_LIKE)));
-        inputDelayYes.setText(String.valueOf(prefs.getLong(K_DELAY_YES, DEF_DELAY_YES)));
-        inputDelayClose.setText(String.valueOf(prefs.getLong(K_DELAY_CLOSE, DEF_DELAY_CLOSE)));
-        inputRepeat.setText(String.valueOf(prefs.getInt(K_REPEAT, DEF_REPEAT)));
-        inputScrollDistance.setText(String.valueOf(prefs.getInt(K_SCROLL_DIST, DEF_SCROLL_DIST)));
-        checkScroll.setChecked(prefs.getBoolean(K_SCROLL, DEF_SCROLL));
+        inputLikeText.setText(prefs.getString(K_LIKE_TEXT, DEF_LIKE));
+        inputYesText.setText(prefs.getString(K_YES_TEXT, DEF_YES));
+        inputCloseText.setText(prefs.getString(K_CLOSE_TEXT, DEF_CLOSE));
+        inputTargetPackage.setText(prefs.getString(K_TARGET_PKG, DEF_TARGET_PKG));
+        inputProfileKeywords.setText(prefs.getString(K_PROFILE_KW, DEF_PROFILE_KW));
+        inputScanInterval.setText(String.valueOf(prefs.getLong(K_SCAN_INTERVAL, DEF_SCAN_INTERVAL)));
     }
 
     private void saveCurrentValues() {
         SharedPreferences.Editor e = prefs.edit();
-        Integer v; Long d;
-        if ((v = parseInt(inputLikeX)) != null) e.putInt(K_LIKE_X, v);
-        if ((v = parseInt(inputLikeY)) != null) e.putInt(K_LIKE_Y, v);
-        if ((v = parseInt(inputYesX)) != null) e.putInt(K_YES_X, v);
-        if ((v = parseInt(inputYesY)) != null) e.putInt(K_YES_Y, v);
-        if ((v = parseInt(inputCloseX)) != null) e.putInt(K_CLOSE_X, v);
-        if ((v = parseInt(inputCloseY)) != null) e.putInt(K_CLOSE_Y, v);
-        if ((d = parseLong(inputDelayLike)) != null) e.putLong(K_DELAY_LIKE, d);
-        if ((d = parseLong(inputDelayYes)) != null) e.putLong(K_DELAY_YES, d);
-        if ((d = parseLong(inputDelayClose)) != null) e.putLong(K_DELAY_CLOSE, d);
-        if ((v = parseInt(inputRepeat)) != null) e.putInt(K_REPEAT, v);
-        if ((v = parseInt(inputScrollDistance)) != null) e.putInt(K_SCROLL_DIST, v);
-        e.putBoolean(K_SCROLL, checkScroll.isChecked());
+        e.putString(K_LIKE_TEXT, textOf(inputLikeText));
+        e.putString(K_YES_TEXT, textOf(inputYesText));
+        e.putString(K_CLOSE_TEXT, textOf(inputCloseText));
+        e.putString(K_TARGET_PKG, textOf(inputTargetPackage));
+        e.putString(K_PROFILE_KW, textOf(inputProfileKeywords));
+        Long iv = parseLong(inputScanInterval);
+        if (iv != null) e.putLong(K_SCAN_INTERVAL, iv);
         e.apply();
     }
 
-    private Integer parseInt(EditText et) {
-        String s = et.getText().toString().trim();
-        if (TextUtils.isEmpty(s)) return null;
-        try { return Integer.parseInt(s); } catch (NumberFormatException ex) { return null; }
+    private String textOf(EditText et) {
+        return et == null ? "" : et.getText().toString().trim();
     }
 
     private Long parseLong(EditText et) {
-        String s = et.getText().toString().trim();
+        String s = textOf(et);
         if (TextUtils.isEmpty(s)) return null;
         try { return Long.parseLong(s); } catch (NumberFormatException ex) { return null; }
     }

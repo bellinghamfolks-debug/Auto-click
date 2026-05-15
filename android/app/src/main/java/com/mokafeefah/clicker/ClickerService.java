@@ -1,48 +1,51 @@
 package com.mokafeefah.clicker;
 
 import android.accessibilityservice.AccessibilityService;
-import android.accessibilityservice.GestureDescription;
-import android.graphics.Path;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * خدمة إمكانية الوصول الخاصة بـ "مكفوف كليكر".
+ * بوت ذكي يعمل عبر تحليل شجرة العناصر (UI Hierarchy) للشاشة الحالية.
  *
- * تنفذ تسلسلًا قابلًا للضبط بالكامل:
- *   1) نقر زر الإعجاب
- *   2) انتظار قابل للضبط
- *   3) نقر زر نعم
- *   4) انتظار قابل للضبط
- *   5) نقر زر الإغلاق (يغلق نافذة النجاح أو نافذة قيود السن/الجنس)
- *   6) انتظار قابل للضبط
- *   7) تمرير اختياري بمسافة قابلة للضبط
- *   8) تكرار للعضو التالي
+ * آلية العمل:
+ *   كل تكة (افتراضي 300 مللي ثانية):
+ *     1. اقرأ شجرة الشاشة عبر getRootInActiveWindow().
+ *     2. تحقق من حزمة التطبيق الهدف (إن وُجد قيد).
+ *     3. شرط الأمان: إن وُجدت كلمات تدل على ملف شخصي -> رجوع تلقائي.
+ *     4. ابحث عن زر "نعم" - إن وُجد انقره.
+ *     5. وإلا ابحث عن زر "إغلاق" - إن وُجد انقره.
+ *     6. وإلا ابحث عن زر "إعجاب/اهتمام" - إن وُجد انقره وزد العداد.
+ *     7. وإلا مرر القائمة برمجيًا.
  *
- * تستخدم فقط dispatchGesture المرخّص رسميًا عبر AccessibilityService،
- * بدون روت ودون تجاوز حماية أي تطبيق.
+ * كل النقرات تتم عبر AccessibilityNodeInfo.performAction(ACTION_CLICK)
+ * مما يضمن دقة 100% ولا يلمس أي منطقة غير مقصودة.
  */
 public class ClickerService extends AccessibilityService {
 
     public static final String STATUS_IDLE = "خامل";
     public static final String STATUS_RUNNING = "يعمل";
     public static final String STATUS_STOPPED = "متوقف";
-    public static final String STATUS_COMPLETED = "مكتمل";
 
     public interface StatusListener {
-        void onStatus(String status, int currentIteration, int totalIterations);
+        void onUpdate(String status, int likesCount, String lastAction);
     }
 
     private static ClickerService instance;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicInteger likesCount = new AtomicInteger(0);
 
     private StatusListener listener;
-    private SequenceConfig config;
-    private int currentIteration;
+    private BotConfig config;
+    private String lastAction = "";
+    private long lastBackTime = 0;
 
     public static ClickerService getInstance() {
         return instance;
@@ -74,7 +77,7 @@ public class ClickerService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // لا نراقب الأحداث - فقط ننفذ النقرات عند الطلب.
+        // لا نعتمد على الأحداث، نستخدم فحصًا دوريًا بدلًا منها.
     }
 
     @Override
@@ -84,175 +87,290 @@ public class ClickerService extends AccessibilityService {
 
     public void setStatusListener(StatusListener l) {
         this.listener = l;
+        // إرسال آخر حالة معروفة فور الاشتراك
+        if (l != null) {
+            l.onUpdate(running.get() ? STATUS_RUNNING : STATUS_IDLE,
+                    likesCount.get(),
+                    lastAction == null ? "" : lastAction);
+        }
     }
 
     public boolean isExecuting() {
         return running.get();
     }
 
-    /**
-     * تنفيذ نقرة واحدة تجريبية على إحداثيات محددة.
-     */
-    public boolean performSingleClick(int x, int y) {
-        return dispatchClickAt(x, y, null);
+    public int getLikesCount() {
+        return likesCount.get();
     }
 
-    /**
-     * بدء تسلسل النقرات التلقائية. يعيد false إذا كانت هناك عملية تعمل.
-     */
-    public boolean startSequence(SequenceConfig cfg) {
+    public String getLastAction() {
+        return lastAction == null ? "" : lastAction;
+    }
+
+    /** بدء البوت. يعيد false إذا كان يعمل بالفعل. */
+    public boolean startBot(BotConfig cfg) {
         if (running.get()) return false;
         this.config = cfg;
-        this.currentIteration = 0;
+        this.likesCount.set(0);
+        this.lastAction = "";
         running.set(true);
-        notifyStatus(STATUS_RUNNING);
-        runNextIteration();
+        notifyUpdate(STATUS_RUNNING);
+        handler.removeCallbacksAndMessages(null);
+        handler.postDelayed(tick, 500L); // مهلة قصيرة ليفتح المستخدم التطبيق الهدف
         return true;
     }
 
-    public void stopSequence() {
+    public void stopBot() {
         if (!running.get()) return;
         running.set(false);
-        mainHandler.removeCallbacksAndMessages(null);
-        notifyStatus(STATUS_STOPPED);
+        handler.removeCallbacksAndMessages(null);
+        notifyUpdate(STATUS_STOPPED);
     }
 
-    private void runNextIteration() {
-        if (!running.get()) return;
-        if (currentIteration >= config.repeat) {
-            running.set(false);
-            notifyStatus(STATUS_COMPLETED);
+    private final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            if (!running.get()) return;
+            try {
+                performOneTick();
+            } catch (Throwable t) {
+                // لا تتعطل أبدًا، استمر بالعمل
+            }
+            if (running.get()) {
+                handler.postDelayed(this, Math.max(150L, config.scanIntervalMs));
+            }
+        }
+    };
+
+    private void performOneTick() {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) {
+            setAction(getString(R.string.action_wait));
             return;
         }
-        currentIteration++;
-        notifyStatus(STATUS_RUNNING);
 
-        // الخطوة 1: نقر زر الإعجاب
-        dispatchClickAt(config.likeX, config.likeY, () -> {
-            if (!running.get()) return;
-            mainHandler.postDelayed(() -> {
-                if (!running.get()) return;
-                // الخطوة 2: نقر زر نعم (يعمل عند نافذة التأكيد، يتجاهل عند نافذة القيود)
-                dispatchClickAt(config.yesX, config.yesY, () -> {
-                    if (!running.get()) return;
-                    mainHandler.postDelayed(() -> {
-                        if (!running.get()) return;
-                        // الخطوة 3: نقر زر الإغلاق
-                        // يغلق نافذة النجاح بعد التأكيد، أو يغلق نافذة قيود السن/الجنس مباشرة
-                        dispatchClickAt(config.closeX, config.closeY, () -> {
-                            if (!running.get()) return;
-                            mainHandler.postDelayed(() -> {
-                                if (!running.get()) return;
-                                if (config.scroll) {
-                                    // الخطوة 4 (اختيارية): تمرير لأسفل بالمسافة المضبوطة
-                                    dispatchScrollDown(config.scrollDistance, () -> {
-                                        if (!running.get()) return;
-                                        // فاصل صغير قبل البدء بالعضو التالي
-                                        mainHandler.postDelayed(this::runNextIteration, 300L);
-                                    });
-                                } else {
-                                    runNextIteration();
-                                }
-                            }, config.delayAfterClose);
-                        });
-                    }, config.delayAfterYes);
-                });
-            }, config.delayAfterLike);
-        });
-    }
-
-    private boolean dispatchClickAt(int x, int y, Runnable onComplete) {
-        Path path = new Path();
-        path.moveTo(x, y);
-        GestureDescription.StrokeDescription stroke =
-                new GestureDescription.StrokeDescription(path, 0, 60);
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(stroke)
-                .build();
-        return dispatchGesture(gesture, new GestureResultCallback() {
-            @Override
-            public void onCompleted(GestureDescription gestureDescription) {
-                if (onComplete != null) mainHandler.post(onComplete);
+        // تصفية حسب حزمة التطبيق الهدف (إن وضع المستخدم قيدًا)
+        if (config.targetPackage != null && !config.targetPackage.isEmpty()) {
+            CharSequence pkg = root.getPackageName();
+            if (pkg == null || !config.targetPackage.equals(pkg.toString())) {
+                setAction(getString(R.string.action_wait));
+                return;
             }
-            @Override
-            public void onCancelled(GestureDescription gestureDescription) {
-                if (onComplete != null) mainHandler.post(onComplete);
-            }
-        }, null);
-    }
-
-    /**
-     * تمرير بمسافة محددة بالبكسل بدءًا من الجزء السفلي من الشاشة للأعلى.
-     */
-    private void dispatchScrollDown(int distancePx, Runnable onComplete) {
-        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-        int centerX = dm.widthPixels / 2;
-        // نبدأ التمرير من نقطة في الثلث السفلي وننتهي للأعلى بمسافة المسحة المطلوبة
-        int startY = (int) (dm.heightPixels * 0.72f);
-        int endY = startY - Math.max(50, distancePx);
-        if (endY < (int) (dm.heightPixels * 0.10f)) {
-            endY = (int) (dm.heightPixels * 0.10f);
         }
 
-        Path path = new Path();
-        path.moveTo(centerX, startY);
-        path.lineTo(centerX, endY);
-        GestureDescription.StrokeDescription stroke =
-                new GestureDescription.StrokeDescription(path, 0, 400);
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(stroke)
-                .build();
-        dispatchGesture(gesture, new GestureResultCallback() {
-            @Override
-            public void onCompleted(GestureDescription gestureDescription) {
-                if (onComplete != null) mainHandler.post(onComplete);
+        // شرط الأمان: إن دخلنا ملفًا شخصيًا بالخطأ -> رجوع تلقائي
+        // (نضع فاصلًا زمنيًا لمنع تكرار Back بسرعة)
+        if (System.currentTimeMillis() - lastBackTime > 1500L) {
+            for (String kw : config.profileKeywords) {
+                String key = kw == null ? "" : kw.trim();
+                if (key.isEmpty()) continue;
+                if (findNodeByText(root, key) != null) {
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    lastBackTime = System.currentTimeMillis();
+                    setAction(getString(R.string.action_back));
+                    return;
+                }
             }
-            @Override
-            public void onCancelled(GestureDescription gestureDescription) {
-                if (onComplete != null) mainHandler.post(onComplete);
-            }
-        }, null);
-    }
+        }
 
-    private void notifyStatus(String status) {
-        if (listener != null) {
-            int total = config != null ? config.repeat : 0;
-            listener.onStatus(status, currentIteration, total);
+        // الأولوية: نعم -> إغلاق -> إعجاب -> تمرير
+        AccessibilityNodeInfo yesNode = findClickableByText(root, config.yesText);
+        if (yesNode != null) {
+            if (clickNode(yesNode)) {
+                setAction(getString(R.string.action_yes));
+            }
+            return;
+        }
+
+        AccessibilityNodeInfo closeNode = findClickableByText(root, config.closeText);
+        if (closeNode != null) {
+            if (clickNode(closeNode)) {
+                setAction(getString(R.string.action_close));
+            }
+            return;
+        }
+
+        AccessibilityNodeInfo likeNode = findClickableByText(root, config.likeText);
+        if (likeNode != null) {
+            if (clickNode(likeNode)) {
+                likesCount.incrementAndGet();
+                setAction(getString(R.string.action_like));
+            }
+            return;
+        }
+
+        // لا توجد أزرار - مرر القائمة برمجيًا
+        AccessibilityNodeInfo scrollable = findScrollable(root);
+        if (scrollable != null) {
+            scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+            setAction(getString(R.string.action_scroll));
+        } else {
+            setAction(getString(R.string.action_wait));
         }
     }
 
-    /**
-     * إعدادات التسلسل الكاملة بكل القيم القابلة للضبط من الواجهة.
-     */
-    public static class SequenceConfig {
-        public final int likeX, likeY;
-        public final int yesX, yesY;
-        public final int closeX, closeY;
-        public final long delayAfterLike;
-        public final long delayAfterYes;
-        public final long delayAfterClose;
-        public final int repeat;
-        public final boolean scroll;
-        public final int scrollDistance;
+    /** ينقر على عقدة قابلة للنقر، يصعد للأب إن لم تكن العقدة نفسها قابلة. */
+    private boolean clickNode(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+        AccessibilityNodeInfo target = findClickableSelfOrAncestor(node);
+        if (target == null) return false;
+        return target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+    }
 
-        public SequenceConfig(int likeX, int likeY,
-                              int yesX, int yesY,
-                              int closeX, int closeY,
-                              long delayAfterLike,
-                              long delayAfterYes,
-                              long delayAfterClose,
-                              int repeat,
-                              boolean scroll,
-                              int scrollDistance) {
-            this.likeX = likeX; this.likeY = likeY;
-            this.yesX = yesX; this.yesY = yesY;
-            this.closeX = closeX; this.closeY = closeY;
-            this.delayAfterLike = delayAfterLike;
-            this.delayAfterYes = delayAfterYes;
-            this.delayAfterClose = delayAfterClose;
-            this.repeat = repeat;
-            this.scroll = scroll;
-            this.scrollDistance = scrollDistance;
+    private AccessibilityNodeInfo findClickableSelfOrAncestor(AccessibilityNodeInfo node) {
+        AccessibilityNodeInfo current = node;
+        int depth = 0;
+        while (current != null && depth < 8) {
+            if (current.isClickable() && current.isEnabled() && current.isVisibleToUser()) {
+                return current;
+            }
+            current = current.getParent();
+            depth++;
+        }
+        return null;
+    }
+
+    /**
+     * يبحث عن عقدة قابلة للنقر تطابق نصًا معينًا (في text أو contentDescription).
+     */
+    private AccessibilityNodeInfo findClickableByText(AccessibilityNodeInfo root, String text) {
+        if (root == null || text == null || text.isEmpty()) return null;
+        String needle = normalizeArabic(text);
+
+        // المحاولة 1: استخدام findAccessibilityNodeInfosByText الرسمية
+        List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByText(text);
+        if (matches != null) {
+            for (AccessibilityNodeInfo n : matches) {
+                if (n == null || !n.isVisibleToUser()) continue;
+                AccessibilityNodeInfo clickable = findClickableSelfOrAncestor(n);
+                if (clickable != null) return clickable;
+            }
+        }
+
+        // المحاولة 2: بحث تكراري يدوي مع تطبيع النص العربي
+        return findClickableRecursive(root, needle);
+    }
+
+    private AccessibilityNodeInfo findClickableRecursive(AccessibilityNodeInfo node, String needle) {
+        if (node == null) return null;
+        if (matchesText(node, needle) && node.isVisibleToUser()) {
+            AccessibilityNodeInfo c = findClickableSelfOrAncestor(node);
+            if (c != null) return c;
+        }
+        int n = node.getChildCount();
+        for (int i = 0; i < n; i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            AccessibilityNodeInfo found = findClickableRecursive(child, needle);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /** يبحث عن أي عقدة مرئية تحتوي النص (دون اشتراط أن تكون قابلة للنقر). */
+    private AccessibilityNodeInfo findNodeByText(AccessibilityNodeInfo root, String text) {
+        if (root == null || text == null || text.isEmpty()) return null;
+        String needle = normalizeArabic(text);
+        return findAnyRecursive(root, needle);
+    }
+
+    private AccessibilityNodeInfo findAnyRecursive(AccessibilityNodeInfo node, String needle) {
+        if (node == null) return null;
+        if (matchesText(node, needle) && node.isVisibleToUser()) {
+            return node;
+        }
+        int n = node.getChildCount();
+        for (int i = 0; i < n; i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            AccessibilityNodeInfo found = findAnyRecursive(child, needle);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private boolean matchesText(AccessibilityNodeInfo node, String normalizedNeedle) {
+        if (node == null) return false;
+        CharSequence text = node.getText();
+        CharSequence desc = node.getContentDescription();
+        if (text != null && normalizeArabic(text.toString()).contains(normalizedNeedle)) return true;
+        if (desc != null && normalizeArabic(desc.toString()).contains(normalizedNeedle)) return true;
+        return false;
+    }
+
+    /**
+     * يطبّع النص العربي لمطابقة أكثر مرونة:
+     *  - إزالة التشكيل
+     *  - توحيد أشكال الألف (إ، أ، آ -> ا)
+     *  - توحيد ى -> ي
+     *  - توحيد ة -> ه
+     *  - إزالة المسافات الزائدة وتحويل للأحرف الصغيرة (للإنجليزية)
+     */
+    private String normalizeArabic(String s) {
+        if (s == null) return "";
+        // إزالة التشكيل
+        String r = s.replaceAll("[\u064B-\u0652\u0670\u0671]", "");
+        r = r.replace('\u0623', '\u0627') // أ -> ا
+             .replace('\u0625', '\u0627') // إ -> ا
+             .replace('\u0622', '\u0627') // آ -> ا
+             .replace('\u0649', '\u064A') // ى -> ي
+             .replace('\u0629', '\u0647'); // ة -> ه
+        return r.trim().toLowerCase();
+    }
+
+    /** يبحث عن عنصر قابل للتمرير في الشجرة. */
+    private AccessibilityNodeInfo findScrollable(AccessibilityNodeInfo node) {
+        if (node == null) return null;
+        if (node.isScrollable() && node.isVisibleToUser()) {
+            // تأكد أن التمرير للأمام ممكن
+            List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
+            if (actions != null) {
+                for (AccessibilityNodeInfo.AccessibilityAction a : actions) {
+                    if (a.getId() == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) {
+                        return node;
+                    }
+                }
+            } else {
+                return node;
+            }
+        }
+        int n = node.getChildCount();
+        for (int i = 0; i < n; i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            AccessibilityNodeInfo found = findScrollable(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private void setAction(String action) {
+        this.lastAction = action;
+        notifyUpdate(STATUS_RUNNING);
+    }
+
+    private void notifyUpdate(final String status) {
+        final StatusListener l = this.listener;
+        if (l == null) return;
+        final int count = likesCount.get();
+        final String act = lastAction == null ? "" : lastAction;
+        handler.post(() -> l.onUpdate(status, count, act));
+    }
+
+    /** إعدادات البوت كاملة. */
+    public static class BotConfig {
+        public final String likeText;
+        public final String yesText;
+        public final String closeText;
+        public final String targetPackage;
+        public final List<String> profileKeywords;
+        public final long scanIntervalMs;
+
+        public BotConfig(String likeText, String yesText, String closeText,
+                         String targetPackage, List<String> profileKeywords, long scanIntervalMs) {
+            this.likeText = likeText == null ? "" : likeText.trim();
+            this.yesText = yesText == null ? "" : yesText.trim();
+            this.closeText = closeText == null ? "" : closeText.trim();
+            this.targetPackage = targetPackage == null ? "" : targetPackage.trim();
+            this.profileKeywords = profileKeywords == null ? new ArrayList<>() : profileKeywords;
+            this.scanIntervalMs = Math.max(150L, scanIntervalMs);
         }
     }
 }

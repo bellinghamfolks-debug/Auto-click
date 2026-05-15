@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">مكفوف كليكر</string>
-    <string name="service_label">خدمة النقر التلقائي للمكفوفين</string>
-    <string name="service_description">تقوم هذه الخدمة بتنفيذ نقرات تلقائية على إحداثيات يحددها المستخدم بنفسه داخل تطبيقات أخرى. تعمل عبر إذن إمكانية الوصول فقط، ولا تحتاج صلاحية الجذر، ولا تتجاوز حماية أي تطبيق.</string>
+    <string name="app_name">مكفوف بوت</string>
+    <string name="service_label">بوت ذكي للمكفوفين</string>
+    <string name="service_description">يقرأ التطبيق شجرة عناصر الشاشة عبر إذن إمكانية الوصول للبحث عن أزرار يحددها المستخدم بنفسه ونقرها برمجيًا. يعمل بدقة كاملة بدون إحداثيات ولا روت ولا تجاوز حماية أي تطبيق.</string>
 
-    <string name="header_title">مكفوف كليكر - نقرات تلقائية للمكفوفين</string>
-    <string name="header_subtitle">حدد إحداثيات الأزرار وعدد التكرار، والتطبيق سينقر نيابة عنك</string>
+    <string name="header_title">مكفوف بوت - بوت ذكي بدون إحداثيات</string>
+    <string name="header_subtitle">يقرأ الشاشة ويبحث عن الأزرار وينقرها تلقائيًا. لا حاجة لتشغيل TalkBack.</string>
 
+    <!-- ===== Status ===== -->
     <string name="section_status">حالة التطبيق</string>
     <string name="service_status_label">حالة خدمة إمكانية الوصول</string>
     <string name="service_status_enabled">مفعلة</string>
@@ -15,51 +16,52 @@
     <string name="exec_status_idle">خامل</string>
     <string name="exec_status_running">يعمل</string>
     <string name="exec_status_stopped">متوقف</string>
-    <string name="exec_status_completed">مكتمل</string>
-    <string name="exec_status_running_progress">يعمل - التكرار رقم %1$d من %2$d</string>
+    <string name="counter_label">عدد الإعجابات المنفذة</string>
+    <string name="last_action_label">آخر إجراء قام به البوت</string>
+    <string name="last_action_none">لا يوجد بعد</string>
 
-    <string name="section_coords">إحداثيات الأزرار</string>
-    <string name="label_like_x">إحداثي زر الإعجاب الأفقي X</string>
-    <string name="label_like_y">إحداثي زر الإعجاب العمودي Y</string>
-    <string name="label_yes_x">إحداثي زر نعم الأفقي X</string>
-    <string name="label_yes_y">إحداثي زر نعم العمودي Y</string>
-    <string name="label_close_x">إحداثي زر الإغلاق الأفقي X</string>
-    <string name="label_close_y">إحداثي زر الإغلاق العمودي Y</string>
-    <string name="hint_coord">أدخل رقمًا بالبكسل</string>
-    <string name="close_hint">يُستخدم لإغلاق نافذة النجاح أو نافذة قيود السن أو الجنس</string>
+    <!-- ===== Configuration ===== -->
+    <string name="section_config">إعدادات البحث عن الأزرار</string>
+    <string name="config_hint">يبحث البوت عن هذه النصوص داخل أي تطبيق على الشاشة. عدّل النصوص لتطابق ما يظهر في تطبيقك الهدف.</string>
 
-    <string name="section_timing">التوقيت والتكرار</string>
-    <string name="label_delay_after_like">مدة الانتظار بعد نقرة الإعجاب بالميلي ثانية</string>
-    <string name="label_delay_after_yes">مدة الانتظار بعد نقرة نعم بالميلي ثانية</string>
-    <string name="label_delay_after_close">مدة الانتظار بعد نقرة الإغلاق بالميلي ثانية</string>
-    <string name="hint_delay_1s">مثال: 1000 أي ثانية واحدة</string>
-    <string name="hint_delay_2s">مثال: 2000 أي ثانيتان</string>
-    <string name="label_repeat">عدد مرات التكرار</string>
-    <string name="hint_repeat">مثال: 10</string>
+    <string name="label_like_text">نص زر الإعجاب أو الاهتمام</string>
+    <string name="hint_like_text">مثال: إهتمام أو اهتمام أو إعجاب</string>
 
-    <string name="section_scroll">خيار التمرير</string>
-    <string name="label_scroll">تمرير الشاشة للأسفل بعد كل عملية لعرض العضو التالي</string>
-    <string name="label_scroll_distance">مسافة التمرير بالبكسل - تحكم في حجم القفزة بين الأعضاء</string>
-    <string name="hint_scroll_distance">مثال: 600 - زده أو أنقصه حسب حجم بطاقة العضو</string>
+    <string name="label_yes_text">نص زر التأكيد - نعم</string>
+    <string name="hint_yes_text">مثال: نعم أو موافق أو تأكيد</string>
 
+    <string name="label_close_text">نص زر الإغلاق - لرسائل النجاح والقيود</string>
+    <string name="hint_close_text">مثال: إغلاق أو حسناً أو موافق</string>
+
+    <string name="label_target_package">اسم حزمة التطبيق الهدف - اختياري</string>
+    <string name="hint_target_package">اتركه فارغًا للعمل في أي تطبيق</string>
+
+    <string name="label_profile_keywords">كلمات تدل على دخول الملف الشخصي بالخطأ - مفصولة بفاصلة</string>
+    <string name="hint_profile_keywords">المؤهل التعليمي، الوزن، الطول</string>
+
+    <string name="label_scan_interval">سرعة فحص الشاشة بالميلي ثانية</string>
+    <string name="hint_scan_interval">مثال: 300 - الأقل أسرع لكن يستهلك بطارية أكثر</string>
+
+    <!-- ===== Actions ===== -->
     <string name="section_actions">الأزرار الرئيسية</string>
     <string name="btn_start">بدء التشغيل</string>
     <string name="btn_stop">إيقاف التشغيل</string>
-    <string name="btn_test_like">تجربة نقرة الإعجاب</string>
-    <string name="btn_test_yes">تجربة نقرة نعم</string>
-    <string name="btn_test_close">تجربة نقرة الإغلاق</string>
     <string name="btn_open_accessibility">فتح إعدادات إمكانية الوصول</string>
     <string name="btn_reset">استعادة الإعدادات الافتراضية</string>
 
+    <!-- ===== Messages ===== -->
     <string name="msg_service_off">يجب تفعيل خدمة إمكانية الوصول أولًا. اضغط زر فتح إعدادات إمكانية الوصول.</string>
-    <string name="msg_invalid_input">أحد الحقول فارغ أو غير صالح. يرجى مراجعة الإحداثيات والتوقيت.</string>
-    <string name="msg_already_running">العملية تعمل حاليًا. اضغط إيقاف قبل بدء عملية جديدة.</string>
-    <string name="msg_started">بدأ التنفيذ</string>
-    <string name="msg_stopped">تم إيقاف التنفيذ</string>
-    <string name="msg_completed">اكتمل التنفيذ بنجاح</string>
-    <string name="msg_test_like_done">تم تنفيذ نقرة تجريبية على زر الإعجاب</string>
-    <string name="msg_test_yes_done">تم تنفيذ نقرة تجريبية على زر نعم</string>
-    <string name="msg_test_close_done">تم تنفيذ نقرة تجريبية على زر الإغلاق</string>
+    <string name="msg_invalid_input">أحد الحقول فارغ أو غير صالح. يرجى مراجعة الإعدادات.</string>
+    <string name="msg_already_running">البوت يعمل حاليًا. اضغط إيقاف قبل التشغيل من جديد.</string>
+    <string name="msg_started">بدأ البوت العمل - افتح التطبيق الهدف الآن</string>
+    <string name="msg_stopped">تم إيقاف البوت</string>
     <string name="msg_reset_done">تمت استعادة الإعدادات الافتراضية</string>
-    <string name="msg_test_failed">تعذر تنفيذ النقرة - تحقق من تفعيل الخدمة</string>
+
+    <!-- ===== Action labels (live status) ===== -->
+    <string name="action_like">تم نقر زر الإعجاب</string>
+    <string name="action_yes">تم نقر زر نعم</string>
+    <string name="action_close">تم نقر زر الإغلاق</string>
+    <string name="action_scroll">تمرير القائمة لأسفل</string>
+    <string name="action_back">رجوع تلقائي من ملف شخصي</string>
+    <string name="action_wait">في انتظار ظهور أزرار قابلة للنقر</string>
 </resources>

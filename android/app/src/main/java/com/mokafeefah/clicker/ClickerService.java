@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.content.Context;
 import android.graphics.Path;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -16,26 +17,31 @@ import android.view.accessibility.AccessibilityWindowInfo;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * بوت ذكي يعمل عبر تحليل شجرة العناصر لكل النوافذ النشطة، ويستخدم آلة حالات
- * صارمة لضمان دورة منضبطة: إعجاب → نعم → إغلاق → تمرير قوي → إعجاب التالي.
+ * بوت ذكي بنظام معالجة الدفعات (Batch Processing).
  *
- * مميزات هذه النسخة:
- *  - آلة حالات (State Machine) تمنع تكرار الإعجاب على نفس العضو.
- *  - بعد نقرة "نعم" أو "إغلاق" يدخل البوت حالة "يجب التمرير" ولا يخرج منها حتى يمرر.
- *  - تمرير ذكي: محاولة ACTION_SCROLL_FORWARD أولًا، ثم سحب قوي بـ dispatchGesture (600 بكسل).
- *  - تأخير 1000ms بعد التمرير قبل البحث عن العضو الجديد.
- *  - بحث في جميع النوافذ بترتيب z-order.
- *  - إيقاف تلقائي بعد مهلة بدون أزرار + اهتزاز عند الإيقاف.
- *  - حماية من الدخول الخطأ لملف شخصي.
+ * منطق العمل الجديد لحل مشكلة التخطي والتحميل التدريجي:
+ *   1) في الشاشة الحالية، اعثر على كل أزرار "إهتمام" المرئية.
+ *   2) عالج كل زر تلو الآخر: انقر إعجاب -> نعم -> إغلاق -> ابحث عن زر إهتمام التالي *في نفس الشاشة*.
+ *   3) سجّل بصمة (bounds) كل زر تم النقر عليه لمنع تكرار النقر على نفس العضو.
+ *   4) فقط حين تنتهي كل الأزرار غير المعالجة في الشاشة، نفّذ تمريرًا واحدًا.
+ *   5) انتظر 2000ms بعد التمرير ليكتمل التحميل التدريجي (Lazy Loading) من الخادم.
+ *   6) امسح سجل البصمات وابدأ دفعة جديدة.
+ *
+ * حمايات إضافية:
+ *   - كشف الدخول الخطأ لملف شخصي عبر كلمات مفتاحية + رجوع تلقائي وانتظار 1 ثانية.
+ *   - بحث في جميع النوافذ بترتيب z-order (للنوافذ المنبثقة).
+ *   - تطبيع النص العربي (تجاهل التشكيل وأشكال الألف/الياء/التاء المربوطة).
+ *   - إيقاف تلقائي بعد مهلة عدم نشاط + اهتزاز ثلاث نبضات.
  */
 public class ClickerService extends AccessibilityService {
 
-    // ===== Public status constants (تستخدمها MainActivity) =====
     public static final String STATUS_IDLE = "خامل";
     public static final String STATUS_RUNNING = "يعمل";
     public static final String STATUS_STOPPED = "متوقف";
@@ -46,21 +52,24 @@ public class ClickerService extends AccessibilityService {
     }
 
     // ===== State machine =====
-    private static final int STATE_LOOK_LIKE   = 0; // البحث عن زر إعجاب جديد
-    private static final int STATE_AFTER_LIKE  = 1; // ينتظر ظهور نافذة (نعم أو إغلاق)
-    private static final int STATE_AFTER_YES   = 2; // ينتظر ظهور نافذة النجاح (إغلاق)
-    private static final int STATE_MUST_SCROLL = 3; // يجب التمرير قبل أي إجراء آخر
+    private static final int STATE_LOOK_LIKE   = 0; // ابحث عن زر إعجاب غير معالج في الشاشة
+    private static final int STATE_AFTER_LIKE  = 1; // ينتظر نافذة (نعم أو إغلاق)
+    private static final int STATE_AFTER_YES   = 2; // ينتظر نافذة النجاح (إغلاق)
+    private static final int STATE_MUST_SCROLL = 3; // كل الأزرار في الشاشة عولجت، تمرير الآن
 
-    // أقصى مدة بقاء في كل حالة قبل قرار اضطراري
-    private static final long MAX_WAIT_AFTER_LIKE_MS = 6000L; // إذا لم تظهر نافذة في 6 ثوانٍ -> تمرير
-    private static final long MAX_WAIT_AFTER_YES_MS = 3500L;  // إذا لم تظهر نافذة نجاح -> تمرير
-    private static final long POST_SCROLL_WAIT_MS = 1000L;    // تأخير بعد التمرير (كما طلب المستخدم)
-    private static final int SCROLL_DISTANCE_PX = 600;        // مسافة السحب القوي
+    private static final long MAX_WAIT_AFTER_LIKE_MS = 6000L;
+    private static final long MAX_WAIT_AFTER_YES_MS = 3500L;
+    private static final long POST_SCROLL_WAIT_MS = 2000L;   // ثانيتان بعد التمرير (Lazy Load)
+    private static final long POST_BACK_WAIT_MS = 1000L;     // ثانية بعد الرجوع التلقائي
+    private static final int SCROLL_DISTANCE_PX = 500;       // مسافة سحب أقصر لمنع التخطي
+    private static final int BOUNDS_GRID_PX = 80;            // حجم خلية البصمة (تسامح موضعي)
 
     private static ClickerService instance;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicInteger likesCount = new AtomicInteger(0);
+    /** بصمات أزرار الإعجاب التي عولجت في الدفعة الحالية (قبل التمرير). */
+    private final Set<String> processedBounds = new HashSet<>();
 
     private StatusListener listener;
     private BotConfig config;
@@ -117,6 +126,7 @@ public class ClickerService extends AccessibilityService {
         this.config = cfg;
         this.likesCount.set(0);
         this.lastAction = "";
+        this.processedBounds.clear();
         long now = System.currentTimeMillis();
         this.lastButtonFoundMs = now;
         this.state = STATE_LOOK_LIKE;
@@ -162,20 +172,20 @@ public class ClickerService extends AccessibilityService {
     private long performOneTick() {
         long now = System.currentTimeMillis();
 
-        // 1. إيقاف تلقائي عند تجاوز مهلة عدم وجود أزرار
+        // 1. الإيقاف التلقائي عند تجاوز المهلة
         if (now - lastButtonFoundMs > config.idleTimeoutMs) {
             stopInternal(STATUS_AUTO_STOPPED);
             return config.scanIntervalMs;
         }
 
-        // 2. جمع جذور كل النوافذ (الأعلى z-order أولًا)
+        // 2. جذور كل النوافذ (z-order: الأعلى أولًا)
         List<AccessibilityNodeInfo> roots = collectAllRoots();
         if (roots.isEmpty()) {
             setAction(getString(R.string.action_wait));
             return config.scanIntervalMs;
         }
 
-        // 3. تصفية بالحزمة الهدف (إن وُجدت)
+        // 3. تصفية بالحزمة الهدف
         if (config.targetPackage != null && !config.targetPackage.isEmpty()) {
             boolean anyMatches = false;
             for (AccessibilityNodeInfo r : roots) {
@@ -191,7 +201,7 @@ public class ClickerService extends AccessibilityService {
             }
         }
 
-        // 4. شرط الأمان: ملف شخصي -> رجوع تلقائي (في أي حالة)
+        // 4. الحماية: ملف شخصي -> رجوع تلقائي وانتظار ثانية كاملة
         if (now - lastBackTime > 1500L) {
             for (String kw : config.profileKeywords) {
                 String key = kw == null ? "" : kw.trim();
@@ -200,32 +210,33 @@ public class ClickerService extends AccessibilityService {
                     performGlobalAction(GLOBAL_ACTION_BACK);
                     lastBackTime = now;
                     setAction(getString(R.string.action_back));
-                    // أي عملية سابقة ملغاة، ابدأ من جديد بحثًا عن إعجاب
+                    // أي عملية ملغاة، ابدأ من جديد بحثًا عن إعجاب
                     transitionTo(STATE_LOOK_LIKE);
-                    return 700L;
+                    return POST_BACK_WAIT_MS;
                 }
             }
         }
 
-        // 5. آلة الحالات - كل حالة لها سلوكها الخاص
+        // 5. آلة الحالات
         switch (state) {
-            case STATE_LOOK_LIKE:
-                return handleLookLike(roots, now);
-            case STATE_AFTER_LIKE:
-                return handleAfterLike(roots, now);
-            case STATE_AFTER_YES:
-                return handleAfterYes(roots, now);
-            case STATE_MUST_SCROLL:
-                return handleMustScroll(roots, now);
+            case STATE_LOOK_LIKE:   return handleLookLike(roots, now);
+            case STATE_AFTER_LIKE:  return handleAfterLike(roots, now);
+            case STATE_AFTER_YES:   return handleAfterYes(roots, now);
+            case STATE_MUST_SCROLL: return handleMustScroll(roots, now);
             default:
                 transitionTo(STATE_LOOK_LIKE);
                 return config.scanIntervalMs;
         }
     }
 
-    /** الحالة 0: ابحث عن زر إعجاب جديد. (مع التعامل مع نوافذ ضالة من دورة سابقة) */
+    /**
+     * الحالة 0: في الشاشة الحالية ابحث عن زر إهتمام غير معالج بعد.
+     *  - أولوية: نظافة نوافذ ضالة (نعم/إغلاق) من دورة سابقة.
+     *  - ثم: ابحث عن أول زر إهتمام بصمته غير مسجلة.
+     *  - إن لم يوجد: انتقل للحالة "يجب التمرير".
+     */
     private long handleLookLike(List<AccessibilityNodeInfo> roots, long now) {
-        // إن وُجدت نافذة قديمة من دورة سابقة - أغلقها أولًا
+        // معالجة أي نوافذ ضالة أولًا
         AccessibilityNodeInfo yesNode = findClickableInAll(roots, config.yesText);
         if (yesNode != null) {
             if (clickNode(yesNode)) {
@@ -239,34 +250,33 @@ public class ClickerService extends AccessibilityService {
         if (closeNode != null) {
             if (clickNode(closeNode)) {
                 setAction(getString(R.string.action_close));
-                transitionTo(STATE_MUST_SCROLL);
+                // بعد إغلاق نافذة ضالة، ارجع للبحث عن إعجاب غير معالج (نفس الدفعة)
+                transitionTo(STATE_LOOK_LIKE);
                 return 800L;
             }
         }
 
-        // ابحث عن زر إعجاب
-        AccessibilityNodeInfo likeNode = findClickableInAll(roots, config.likeText);
+        // ابحث عن أول زر إهتمام لم تُسجّل بصمته في الدفعة الحالية
+        AccessibilityNodeInfo likeNode = findUnprocessedClickable(roots, config.likeText);
         if (likeNode != null) {
+            String key = boundsKey(likeNode);
             if (clickNode(likeNode)) {
+                processedBounds.add(key); // سجّل البصمة فورًا لمنع إعادة النقر
                 likesCount.incrementAndGet();
                 setAction(getString(R.string.action_like));
                 lastButtonFoundMs = now;
                 transitionTo(STATE_AFTER_LIKE);
-                return config.popupWaitMs; // 2000ms افتراضي
+                return config.popupWaitMs; // افتراضي 2000ms
             }
             return config.scanIntervalMs;
         }
 
-        // لا توجد أزرار - مرر القائمة برمجيًا للوصول لأعضاء جدد
-        if (performSmartScroll(roots)) {
-            setAction(getString(R.string.action_scroll));
-            return POST_SCROLL_WAIT_MS;
-        }
-        setAction(getString(R.string.action_wait));
-        return config.scanIntervalMs;
+        // لا توجد أزرار إهتمام غير معالجة -> الدفعة اكتملت، يجب التمرير
+        transitionTo(STATE_MUST_SCROLL);
+        return 300L;
     }
 
-    /** الحالة 1: نقرنا إعجاب - ننتظر ظهور نافذة (نعم أو إغلاق). */
+    /** الحالة 1: بعد نقرة الإعجاب - انتظار ظهور نافذة (نعم أو إغلاق). */
     private long handleAfterLike(List<AccessibilityNodeInfo> roots, long now) {
         AccessibilityNodeInfo yesNode = findClickableInAll(roots, config.yesText);
         if (yesNode != null) {
@@ -283,62 +293,64 @@ public class ClickerService extends AccessibilityService {
         if (closeNode != null) {
             if (clickNode(closeNode)) {
                 setAction(getString(R.string.action_close));
-                transitionTo(STATE_MUST_SCROLL);
+                // ارجع لمعالجة العضو التالي في نفس الشاشة (بدون تمرير)
+                transitionTo(STATE_LOOK_LIKE);
                 return 800L;
             }
             return config.scanIntervalMs;
         }
 
-        // إذا تجاوزنا المهلة بدون ظهور نافذة - تمرير اضطراري
+        // مهلة اضطرارية إذا لم تظهر نافذة
         if (now - stateChangedAt > MAX_WAIT_AFTER_LIKE_MS) {
-            transitionTo(STATE_MUST_SCROLL);
-            return 200L;
+            transitionTo(STATE_LOOK_LIKE);
+            return 300L;
         }
         setAction(getString(R.string.action_wait));
         return config.scanIntervalMs;
     }
 
-    /** الحالة 2: نقرنا نعم - ننتظر نافذة النجاح (إغلاق). */
+    /** الحالة 2: بعد نقرة نعم - انتظار نافذة النجاح (إغلاق). */
     private long handleAfterYes(List<AccessibilityNodeInfo> roots, long now) {
         AccessibilityNodeInfo closeNode = findClickableInAll(roots, config.closeText);
         if (closeNode != null) {
             if (clickNode(closeNode)) {
                 setAction(getString(R.string.action_close));
-                transitionTo(STATE_MUST_SCROLL);
+                // ارجع لمعالجة العضو التالي في نفس الشاشة (بدون تمرير)
+                transitionTo(STATE_LOOK_LIKE);
                 return 800L;
             }
             return config.scanIntervalMs;
         }
-        // إن لم تظهر نافذة النجاح خلال المهلة - تمرير اضطراري
         if (now - stateChangedAt > MAX_WAIT_AFTER_YES_MS) {
-            transitionTo(STATE_MUST_SCROLL);
-            return 200L;
+            // ربما النجاح انغلق تلقائيًا، عد للبحث عن العضو التالي
+            transitionTo(STATE_LOOK_LIKE);
+            return 300L;
         }
         setAction(getString(R.string.action_wait));
         return config.scanIntervalMs;
     }
 
-    /** الحالة 3: يجب التمرير قبل أي بحث جديد عن إعجاب. */
+    /**
+     * الحالة 3: كل الأزرار المرئية في الشاشة عولجت - نفّذ تمريرًا ثم انتظر التحميل.
+     */
     private long handleMustScroll(List<AccessibilityNodeInfo> roots, long now) {
         boolean scrolled = performSmartScroll(roots);
         if (scrolled) {
             setAction(getString(R.string.action_scroll));
         }
+        // امسح بصمات الدفعة السابقة - الشاشة الجديدة لها أعضاء جدد
+        processedBounds.clear();
         transitionTo(STATE_LOOK_LIKE);
-        return POST_SCROLL_WAIT_MS; // 1000ms قبل البحث عن إعجاب جديد
+        // انتظر اكتمال التحميل التدريجي من الخادم
+        return POST_SCROLL_WAIT_MS;
     }
 
-    /**
-     * تمرير ذكي: يحاول ACTION_SCROLL_FORWARD أولًا، ثم سحب قوي بـ dispatchGesture كاحتياط.
-     */
     private boolean performSmartScroll(List<AccessibilityNodeInfo> roots) {
-        // المحاولة 1: ACTION_SCROLL_FORWARD على القائمة
         AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
         if (scrollable != null) {
             boolean ok = scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
             if (ok) return true;
         }
-        // المحاولة 2: سحب قوي على إحداثيات الشاشة (600 بكسل)
         return performGestureSwipeUp();
     }
 
@@ -346,16 +358,16 @@ public class ClickerService extends AccessibilityService {
         try {
             DisplayMetrics dm = getResources().getDisplayMetrics();
             int centerX = dm.widthPixels / 2;
-            int startY = (int) (dm.heightPixels * 0.75f);
+            int startY = (int) (dm.heightPixels * 0.72f);
             int endY = startY - SCROLL_DISTANCE_PX;
-            if (endY < (int) (dm.heightPixels * 0.10f)) {
-                endY = (int) (dm.heightPixels * 0.10f);
+            if (endY < (int) (dm.heightPixels * 0.15f)) {
+                endY = (int) (dm.heightPixels * 0.15f);
             }
             Path path = new Path();
             path.moveTo(centerX, startY);
             path.lineTo(centerX, endY);
             GestureDescription.StrokeDescription stroke =
-                    new GestureDescription.StrokeDescription(path, 0, 400);
+                    new GestureDescription.StrokeDescription(path, 0, 450);
             GestureDescription gesture = new GestureDescription.Builder()
                     .addStroke(stroke)
                     .build();
@@ -363,6 +375,59 @@ public class ClickerService extends AccessibilityService {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    // ===================== Bounds tracking =====================
+
+    /** بصمة موضعية للزر مبنية على مركز إحداثياته مع تسامح BOUNDS_GRID_PX. */
+    private String boundsKey(AccessibilityNodeInfo node) {
+        Rect r = new Rect();
+        node.getBoundsInScreen(r);
+        int cx = (r.left + r.right) / 2;
+        int cy = (r.top + r.bottom) / 2;
+        return (cx / BOUNDS_GRID_PX) + "," + (cy / BOUNDS_GRID_PX);
+    }
+
+    /**
+     * يبحث عن أول زر مطابق للنص لم تُسجّل بصمته في الدفعة الحالية.
+     * هذا هو القلب النابض لنظام معالجة الدفعات.
+     */
+    private AccessibilityNodeInfo findUnprocessedClickable(
+            List<AccessibilityNodeInfo> roots, String text) {
+        if (text == null || text.isEmpty()) return null;
+        String needle = normalizeArabic(text);
+        for (AccessibilityNodeInfo root : roots) {
+            // المحاولة 1: البحث الرسمي
+            List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByText(text);
+            if (matches != null) {
+                for (AccessibilityNodeInfo n : matches) {
+                    if (n == null || !n.isVisibleToUser()) continue;
+                    AccessibilityNodeInfo clickable = findClickableSelfOrAncestor(n);
+                    if (clickable == null) continue;
+                    if (processedBounds.contains(boundsKey(clickable))) continue;
+                    return clickable;
+                }
+            }
+            // المحاولة 2: بحث تكراري مع التطبيع وبدون المعالجة
+            AccessibilityNodeInfo found = findUnprocessedRecursive(root, needle);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findUnprocessedRecursive(AccessibilityNodeInfo node, String needle) {
+        if (node == null) return null;
+        if (matchesText(node, needle) && node.isVisibleToUser()) {
+            AccessibilityNodeInfo c = findClickableSelfOrAncestor(node);
+            if (c != null && !processedBounds.contains(boundsKey(c))) return c;
+        }
+        int n = node.getChildCount();
+        for (int i = 0; i < n; i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            AccessibilityNodeInfo found = findUnprocessedRecursive(child, needle);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     // ===================== Window & node helpers =====================

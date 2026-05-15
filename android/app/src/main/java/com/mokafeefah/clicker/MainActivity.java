@@ -37,7 +37,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String DEF_YES = "نعم";
     private static final String DEF_CLOSE = "إغلاق";
     private static final String DEF_TARGET_PKG = "";
-    private static final String DEF_PROFILE_KW = "المؤهل التعليمي,الوزن,الطول,تاريخ الميلاد";
+    private static final String DEF_PROFILE_KW = "المؤهل التعليمي,الوزن,الطول,تاريخ الميلاد,تاريخ التسجيل,مواصفات زوجي,إبلاغ";
     private static final long DEF_SCAN_INTERVAL = 300L;
     private static final long DEF_POPUP_WAIT = 2000L;
     private static final long DEF_IDLE_TIMEOUT = 30L; // بالثواني في الواجهة

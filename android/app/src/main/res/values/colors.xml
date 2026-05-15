@@ -1,21 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="background">#0A0E1A</color>
-    <color name="surface">#1A1F2E</color>
-    <color name="surface_elevated">#262C3D</color>
-    <color name="primary">#5B8DEF</color>
-    <color name="primary_dark">#3B6EDB</color>
-    <color name="accent">#FFB84D</color>
-    <color name="on_primary">#FFFFFF</color>
-    <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#A8B2C7</color>
-    <color name="text_hint">#6B7385</color>
-    <color name="success">#4CAF50</color>
-    <color name="warning">#FF9800</color>
-    <color name="error">#F44336</color>
-    <color name="describe">#4FC3F7</color>
-    <color name="read">#81C784</color>
-    <color name="ask">#FFB74D</color>
-    <color name="translate">#BA68C8</color>
-    <color name="shopping">#26A69A</color>
+    <color name="primary">#42a5f5</color>
+    <color name="primary_dark">#1e88e5</color>
+    <color name="accent">#ffca28</color>
+    <color name="background">#121212</color>
+    <color name="surface">#1e1e1e</color>
+    <color name="surface_elevated">#2a2a2a</color>
+    <color name="text_primary">#ffffff</color>
+    <color name="text_secondary">#b0bec5</color>
+    <color name="text_hint">#757575</color>
+    <color name="on_primary">#000000</color>
+    <color name="success">#66bb6a</color>
+    <color name="stop_red">#e53935</color>
+    <color name="divider">#3a3a3a</color>
+    <color name="error">#ef5350</color>
+    <color name="info">#26c6da</color>
 </resources>

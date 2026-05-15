@@ -1,90 +1,91 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">بصير AI</string>
-    <string name="app_tagline">عينك الذكية في كل مكان</string>
+    <!-- Application -->
+    <string name="app_name">مكفوف بوت 2.0</string>
+    <string name="app_version">الإصدار 2.0</string>
+    <string name="service_label">بوت ذكي للمكفوفين 2.0</string>
+    <string name="service_description">يقرأ التطبيق شجرة عناصر الشاشة عبر إذن إمكانية الوصول للبحث عن أزرار يحددها المستخدم بنفسه ونقرها برمجياً. يعمل بدقة كاملة بدون إحداثيات ولا روت ولا تجاوز حماية أي تطبيق. الإصدار 2.0 — محرك ذكي مستند للأحداث.</string>
 
-    <!-- Status -->
-    <string name="status_ready">جاهز</string>
-    <string name="status_capturing">يفتح الكاميرا</string>
-    <string name="status_processing">جاري التحليل بالذكاء الاصطناعي…</string>
-    <string name="status_listening">جاري الاستماع لسؤالك…</string>
-    <string name="status_speaking">جاري قراءة النتيجة</string>
-    <string name="status_done">تم</string>
-    <string name="status_error">خطأ</string>
+    <!-- Header -->
+    <string name="header_title">مكفوف بوت 2.0 — محرك ذكي</string>
+    <string name="header_subtitle">يقرأ الشاشة ويبحث عن الأزرار وينقرها لحظياً عبر مراقب الأحداث. لا حاجة لـ TalkBack.</string>
 
-    <!-- Main buttons -->
-    <string name="btn_describe">وصف المشهد</string>
-    <string name="btn_describe_desc">التقط صورة لما حولك واسمع وصفًا ذكيًا بالعربية</string>
+    <!-- Sections -->
+    <string name="section_status">حالة التطبيق</string>
+    <string name="section_config">إعدادات البحث عن الأزرار</string>
+    <string name="section_advanced">الإعدادات المتقدمة — جديد في 2.0</string>
+    <string name="section_actions">الأزرار الرئيسية</string>
 
-    <string name="btn_read">قراءة المستندات</string>
-    <string name="btn_read_desc">التقط صورة لورقة أو فاتورة واسمع تلخيصًا ذكيًا</string>
+    <!-- Status labels -->
+    <string name="service_status_label">حالة خدمة إمكانية الوصول</string>
+    <string name="service_status_enabled">مفعّلة ✓</string>
+    <string name="service_status_disabled">غير مفعّلة — اضغط زر فتح إعدادات إمكانية الوصول</string>
+    <string name="exec_status_label">حالة التنفيذ</string>
+    <string name="exec_status_idle">خامل</string>
+    <string name="exec_status_running">يعمل</string>
+    <string name="exec_status_stopped">متوقف</string>
+    <string name="counter_label">عدد الإعجابات المنفذة</string>
+    <string name="last_action_label">آخر إجراء قام به البوت</string>
+    <string name="last_action_none">لا يوجد بعد</string>
 
-    <string name="btn_ask">اسأل بصير</string>
-    <string name="btn_ask_desc">التقط صورة ثم اسأل أي شيء عنها بصوتك</string>
+    <!-- Config hint -->
+    <string name="config_hint">يبحث البوت عن هذه النصوص داخل أي تطبيق على الشاشة. عدّل النصوص لتطابق ما يظهر في تطبيقك الهدف.</string>
+    <string name="advanced_hint">إعدادات جديدة في الإصدار 2.0 لمعالجة التضخم والبطء التراكمي.</string>
 
-    <string name="btn_translate">المترجم الذكي</string>
-    <string name="btn_translate_desc">ترجمة ذكية مع شرح نبرة النص الأصلي</string>
+    <!-- Basic labels & hints -->
+    <string name="label_like_text">نص زر الإعجاب أو الاهتمام</string>
+    <string name="hint_like_text">مثال: إهتمام أو اهتمام أو إعجاب</string>
+    <string name="label_yes_text">نص زر التأكيد — نعم</string>
+    <string name="hint_yes_text">مثال: نعم أو موافق أو تأكيد</string>
+    <string name="label_close_text">نص زر الإغلاق — لرسائل النجاح والقيود</string>
+    <string name="hint_close_text">مثال: إغلاق أو حسناً أو موافق</string>
+    <string name="label_target_package">اسم حزمة التطبيق الهدف — اختياري</string>
+    <string name="hint_target_package">اتركه فارغاً للعمل في أي تطبيق</string>
+    <string name="label_profile_keywords">كلمات تدل على دخول الملف الشخصي بالخطأ — مفصولة بفاصلة</string>
+    <string name="hint_profile_keywords">المؤهل التعليمي، الوزن، الطول</string>
+    <string name="label_scan_interval">سرعة فحص الشاشة بالميلي ثانية</string>
+    <string name="hint_scan_interval">مثال: 300 — الأقل أسرع لكن يستهلك بطارية أكثر</string>
+    <string name="label_popup_wait">مدة انتظار ظهور النافذة المنبثقة بعد نقرة الإعجاب — احتياطي فقط</string>
+    <string name="hint_popup_wait">مثال: 1500 — في الإصدار 2.0 يعمل النقر فور رصد الحدث، هذه قيمة الحدّ الأقصى للسلامة</string>
+    <string name="label_idle_timeout">إيقاف تلقائي إذا لم يجد البوت أي زر إعجاب لمدة (ثانية)</string>
+    <string name="hint_idle_timeout">مثال: 30 — يتوقف بعد 30 ثانية من عدم وجود أزرار</string>
 
-    <string name="btn_shopping">التسوق الذكي</string>
-    <string name="btn_shopping_desc">صور أي منتج واعرف اسمه وسعره وصلاحيته ومكوناته مع كشف الحساسيات</string>
+    <!-- Advanced labels & hints (NEW in 2.0) -->
+    <string name="label_error_keywords">كلمات رسائل الخطأ — يتم تجاوز العضو فوراً عند ظهورها</string>
+    <string name="hint_error_keywords">مفصولة بفاصلة، مثال: مضاف سابقاً، لا يمكن الإضافة، تم الإرسال مسبقاً</string>
+    <string name="label_watchdog">مهلة مراقب الاستعادة — إذا علق البوت في نفس الحالة (ثانية)</string>
+    <string name="hint_watchdog">افتراضي 15 — عند انقضائها يقوم البوت بـ Back ثم تمرير لإعادة التنشيط</string>
+    <string name="label_stop_at">حد التوقف عند العدد — 0 يعني لا حد</string>
+    <string name="hint_stop_at">مثال: 100 — يتوقف البوت تلقائياً بعد 100 عضو</string>
+    <string name="label_vibrate">تفعيل الاهتزاز عند الإيقاف</string>
+    <string name="label_fast_mode">الوضع السريع — يقلل الانتظار تلقائياً</string>
+    <string name="label_event_driven">المحرك المستند للأحداث (موصى به للسرعة)</string>
 
-    <string name="btn_repeat">إعادة قراءة النتيجة</string>
-    <string name="btn_stop_speech">إيقاف القراءة</string>
-    <string name="btn_settings">الإعدادات</string>
+    <!-- Buttons -->
+    <string name="btn_start">▶ بدء التشغيل</string>
+    <string name="btn_stop">■ إيقاف التشغيل</string>
+    <string name="btn_open_accessibility">فتح إعدادات إمكانية الوصول</string>
+    <string name="btn_reset">↺ استعادة الإعدادات الافتراضية</string>
 
-    <!-- Describe modes -->
-    <string name="mode_quick">وصف سريع</string>
-    <string name="mode_detailed">وصف تفصيلي</string>
-    <string name="mode_movement">تنبيهات المشي</string>
+    <!-- Messages -->
+    <string name="msg_started">بدأ البوت العمل — افتح التطبيق الهدف الآن</string>
+    <string name="msg_stopped">تم إيقاف البوت</string>
+    <string name="msg_already_running">البوت يعمل حالياً. اضغط إيقاف قبل التشغيل من جديد.</string>
+    <string name="msg_service_off">يجب تفعيل خدمة إمكانية الوصول أولاً. اضغط زر فتح إعدادات إمكانية الوصول.</string>
+    <string name="msg_invalid_input">أحد الحقول فارغ أو غير صالح. يرجى مراجعة الإعدادات.</string>
+    <string name="msg_reset_done">تمت استعادة الإعدادات الافتراضية</string>
+    <string name="msg_auto_stopped">إيقاف تلقائي — لم يجد البوت أي أزرار لفترة طويلة</string>
+    <string name="msg_target_reached">تم بلوغ الحد المحدد — توقف تلقائي</string>
+    <string name="msg_recovered">مراقب الاستعادة عمل — العودة للنشاط</string>
 
-    <!-- OCR tasks -->
-    <string name="task_summary">تلخيص</string>
-    <string name="task_full">قراءة كاملة</string>
-    <string name="task_dates">استخراج التواريخ</string>
-    <string name="task_amounts">استخراج المبالغ</string>
-    <string name="task_simplified">شرح مبسط</string>
-
-    <!-- Translation -->
-    <string name="dir_ar_en">عربي إلى إنجليزي</string>
-    <string name="dir_en_ar">إنجليزي إلى عربي</string>
-    <string name="tone_natural">نبرة طبيعية</string>
-    <string name="tone_formal">نبرة رسمية</string>
-    <string name="tone_casual">نبرة محادثة</string>
-    <string name="tone_dating">نبرة تعارف وزواج</string>
-    <string name="tone_polite">نبرة مهذبة</string>
-    <string name="tone_brief">ترجمة مختصرة</string>
-
-    <!-- Permissions / errors -->
-    <string name="err_no_camera">يجب السماح للكاميرا أولًا</string>
-    <string name="err_no_mic">يجب السماح للميكروفون أولًا</string>
-    <string name="err_no_network">لا يوجد اتصال بالإنترنت</string>
-    <string name="err_server">حدث خطأ في الخادم - حاول مرة أخرى</string>
-    <string name="err_capture">تعذر التقاط الصورة</string>
-    <string name="err_no_tts">قارئ الكلام العربي غير مثبت على هاتفك</string>
-    <string name="err_no_stt">التعرف على الصوت غير متاح على هذا الجهاز</string>
-
-    <!-- Result -->
-    <string name="result_label">النتيجة</string>
-    <string name="last_action_none">لم تنفذ أي عملية بعد</string>
-    <string name="welcome_announcement">مرحبًا بك في بصير، عينك الذكية. اضغط أي زر من الأزرار الأربعة لتبدأ.</string>
-
-    <!-- Translate dialog -->
-    <string name="dlg_translate_title">المترجم الذكي</string>
-    <string name="dlg_translate_hint">أدخل النص أو اضغط ميكروفون للإملاء</string>
-    <string name="btn_mic">إملاء صوتي</string>
-    <string name="btn_do_translate">ترجمة الآن</string>
-
-    <!-- Ask dialog -->
-    <string name="dlg_ask_prompt">قل سؤالك الآن</string>
-
-    <!-- Settings -->
-    <string name="label_backend_url">عنوان خادم بصير</string>
-    <string name="hint_backend_url">https://yourapp.preview.emergentagent.com</string>
-    <string name="label_speech_rate">سرعة القراءة</string>
-    <string name="label_allergens">حساسيات المستخدم (مفصولة بفاصلة)</string>
-    <string name="hint_allergens">مثال: حليب، فول سوداني، غلوتين، بيض</string>
-    <string name="btn_save">حفظ</string>
-    <string name="btn_test_connection">اختبار الاتصال</string>
-    <string name="msg_saved">تم الحفظ</string>
-    <string name="msg_connected">الاتصال يعمل</string>
+    <!-- Actions -->
+    <string name="action_wait">في انتظار ظهور أزرار قابلة للنقر</string>
+    <string name="action_like">تم نقر زر الإعجاب</string>
+    <string name="action_yes">تم نقر زر نعم</string>
+    <string name="action_close">تم نقر زر الإغلاق</string>
+    <string name="action_scroll">تمرير القائمة لأسفل</string>
+    <string name="action_back">رجوع تلقائي من ملف شخصي</string>
+    <string name="action_error_skip">تجاوز سريع — رسالة خطأ مرصودة</string>
+    <string name="action_watchdog">مراقب الاستعادة فعّال — إعادة تنشيط</string>
+    <string name="action_event_trigger">استجابة لحدث الشاشة فوراً</string>
 </resources>

@@ -1,4 +1,4 @@
-name: Build Baseer AI APK
+name: Build Mokafeefah Clicker APK
 
 on:
   push:
@@ -37,13 +37,13 @@ jobs:
         working-directory: ./android
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/baseer-ai-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk out/mokafeefah-clicker-v2.0-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: baseer-ai-apk
-          path: android/out/baseer-ai-debug.apk
+          name: mokafeefah-clicker-v2.0-apk
+          path: android/out/mokafeefah-clicker-v2.0-debug.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -51,9 +51,25 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: "بصير AI - إصدار ${{ github.run_number }}"
-          files: android/out/baseer-ai-debug.apk
-          generate_release_notes: true
+          tag_name: v2.0-build-${{ github.run_number }}
+          name: "مكفوف بوت 2.0 - إصدار ${{ github.run_number }}"
+          body: |
+            ## مكفوف بوت 2.0 — محرك ذكي مستند للأحداث
+            هذا الإصدار يحل مشكلة البطء التراكمي بالكامل.
+
+            ### التحديثات الهندسية
+            - 🧠 **Smart Scan & Recycle** — استدعاء recycle() لكل عقدة وتنظيف ذاكرة العناصر
+            - ⚡ **Event-Driven Automation** — استجابة فورية لأحداث الشاشة (TYPE_WINDOW_STATE_CHANGED)
+            - 🎯 **Filtering Logic** — تجاوز فوري لرسائل "مضاف سابقاً" و "لا يمكن الإضافة"
+            - 📜 **Dynamic Scrolling** — ACTION_SCROLL_FORWARD مع مسافة سحب متكيّفة
+            - 🛡️ **Watchdog Timer** — استرداد تلقائي بعد 15 ثانية تجمد
+
+            ### إعدادات جديدة
+            - حقل كلمات رسائل الخطأ
+            - مهلة مراقب الاستعادة (Watchdog)
+            - حد التوقف عند العدد المحدد
+            - مفاتيح: الوضع السريع، المحرك المستند للأحداث، تفعيل الاهتزاز
+          files: android/out/mokafeefah-clicker-v2.0-debug.apk
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,4 @@
-// Top-level build file - shared config for all sub-projects
+// Top-level build file - mokafeefah-clicker v2.0
 plugins {
     id 'com.android.application' version '8.2.2' apply false
 }

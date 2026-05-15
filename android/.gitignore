@@ -1,13 +1,9 @@
-# Gradle / Android build outputs
 .gradle/
 build/
-**/build/
 local.properties
-*.iml
 .idea/
-captures/
-.externalNativeBuild/
-.cxx/
-*.jks
-*.keystore
-out/
+*.iml
+.DS_Store
+app/build/
+app/release/
+app/debug/

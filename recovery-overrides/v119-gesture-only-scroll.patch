@@ -1,0 +1,168 @@
+--- /mnt/data/v118_work/app/build.gradle	2026-08-19 12:31:46.799475290 +0000
++++ /mnt/data/v119_work/app/build.gradle	2026-08-19 12:50:42.341340165 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 39
+-        versionName '1.18.0-content-gesture'
++        versionCode 40
++        versionName '1.19.0-gesture-only-scroll'
+     }
+ 
+     buildTypes {
+--- /mnt/data/v118_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 12:31:46.799873382 +0000
++++ /mnt/data/v119_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 12:50:56.192140896 +0000
+@@ -2106,18 +2106,11 @@
+         // tick verifyPendingScrollProgress() compares it to the new viewport.
+         String beforeSignature = viewportSignature(roots);
+ 
+-        AccessibilityNodeInfo loadMore = findLoadMoreButton(roots);
+-        if (loadMore != null && performClick(loadMore)) {
+-            pendingScrollSignature = beforeSignature;
+-            diagEvent("SCROLL: tapped load-more; awaiting viewport verification");
+-            setAction(getString(R.string.action_load_more));
+-            // Do NOT clear processedBounds here. The viewport has not been
+-            // proven to move yet. Clearing early makes the same visible cards
+-            // eligible again when pagination/scrolling stalls.
+-            transitionTo(STATE_LOOK_LIKE);
+-            return POST_SCROLL_WAIT_MS;
+-        }
+-
++        // 1.19: never tap a generic "load more" control before scrolling.
++        // In this WebView that branch can trigger a full-page reload while
++        // leaving the same member viewport in place. A real finger gesture is
++        // the only primary way forward; pagination must be proven by changed
++        // member content on the next tick.
+         boolean scrolled = performSmartScroll(roots, scrollPatternIndex);
+         diagEvent("SCROLL: pattern=" + scrollPatternIndex + " dispatched=" + scrolled
+                 + " anchor=" + shortSig(beforeSignature)
+@@ -2261,65 +2254,39 @@
+      * recognises as "user wants more".
+      */
+     private boolean performSmartScroll(List<AccessibilityNodeInfo> roots, int patternIndex) {
+-        // Primary path: a real finger gesture inside the detected member-list
+-        // band. WebViews may return true from ACTION_SCROLL_* without moving
+-        // their inner document, so semantic actions are only a fallback after
+-        // repeated VERIFIED unchanged gestures.
+-        if (unchangedViewportScrolls < 2) {
+-            boolean gestured = performGestureSwipeUp(patternIndex);
+-            if (gestured) return true;
+-        }
+-
+-        AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
+-        if (scrollable != null) {
+-            try {
+-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+-                        && scrollable.performAction(
+-                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.getId())) {
+-                    diagEvent("SCROLL-FALLBACK: ACTION_SCROLL_DOWN accepted after verified gesture stall");
+-                    return true;
+-                }
+-            } catch (Throwable ignore) {}
+-            try {
+-                if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+-                    diagEvent("SCROLL-FALLBACK: ACTION_SCROLL_FORWARD accepted after verified gesture stall");
+-                    return true;
+-                }
+-            } catch (Throwable ignore) {}
+-        }
+-
+-        // If the accessibility action was unavailable/rejected, keep using a
+-        // finger gesture, rotating shape/velocity on each retry.
++        // 1.19: gesture-only forward scrolling. The previous semantic
++        // ACTION_SCROLL_* fallback can report acceptance without moving the
++        // inner WebView. We only send a real finger fling and then let
++        // SCROLL-VERIFY decide whether member content actually advanced.
+         return performGestureSwipeUp(patternIndex);
+     }
+ 
+     private boolean performGestureSwipeUp(int patternIndex) {
+         try {
+-            Rect band = currentProbe != null
+-                    ? currentProbe.scrollGestureBounds()
+-                    : new Rect((int) (screenW * 0.18f), (int) (screenH * 0.20f),
+-                               (int) (screenW * 0.82f), (int) (screenH * 0.80f));
+-            int width = Math.max(1, band.width());
+-            int height = Math.max(1, band.height());
+-            int centerX = band.left + width / 2;
+-            centerX = Math.max((int) (screenW * 0.20f), Math.min((int) (screenW * 0.80f), centerX));
++            // Use a stable non-control column near the middle of the content.
++            // Do not derive X from the like buttons: dragging on an
++            // interactive control can be intercepted by the WebView.
++            final float[] xFractions = new float[] {0.50f, 0.42f, 0.58f};
++            int centerX = (int) (screenW * xFractions[Math.floorMod(patternIndex, 3)]);
+ 
+-            float startInBand, endInBand;
++            float startFraction;
++            float endFraction;
+             long duration;
+-            switch (patternIndex % 3) {
+-                case 0: startInBand = 0.82f; endInBand = 0.22f; duration = 520L; break;
+-                case 1: startInBand = 0.88f; endInBand = 0.30f; duration = 700L; break;
+-                default: startInBand = 0.76f; endInBand = 0.16f; duration = 380L; break;
++            switch (Math.floorMod(patternIndex, 3)) {
++                case 0:
++                    startFraction = 0.80f; endFraction = 0.22f; duration = 280L;
++                    break;
++                case 1:
++                    startFraction = 0.84f; endFraction = 0.18f; duration = 235L;
++                    break;
++                default:
++                    startFraction = 0.76f; endFraction = 0.26f; duration = 340L;
++                    break;
+             }
+-            int startY = band.top + (int) (height * startInBand);
+-            int endY = band.top + (int) (height * endInBand);
+-            int minTravel = Math.max(220, (int) (screenH * 0.28f));
+-            if (startY - endY < minTravel) {
+-                endY = Math.max(band.top + 24, startY - minTravel);
+-            }
+-            startY = Math.min(startY, (int) (screenH * 0.84f));
+-            endY = Math.max(endY, (int) (screenH * 0.16f));
+-            if (startY <= endY + 80) return false;
++
++            int startY = (int) (screenH * startFraction);
++            int endY = (int) (screenH * endFraction);
++            if (startY <= endY + (int) (screenH * 0.35f)) return false;
+ 
+             Path path = new Path();
+             path.moveTo(centerX, startY);
+@@ -2329,24 +2296,24 @@
+             GestureDescription gesture =
+                     new GestureDescription.Builder().addStroke(stroke).build();
+ 
+-            diagEvent("SCROLL-GESTURE: dispatch x=" + centerX
++            diagEvent("SCROLL-GESTURE-ONLY: dispatch x=" + centerX
+                     + " y=" + startY + "->" + endY
+-                    + " band=" + band.left + "," + band.top + "," + band.right + "," + band.bottom
++                    + " durationMs=" + duration
+                     + " pattern=" + patternIndex);
+ 
+             Handler callbackHandler = engineHandler != null ? engineHandler : mainHandler;
+             return dispatchGesture(gesture, new GestureResultCallback() {
+                 @Override public void onCompleted(GestureDescription gestureDescription) {
+                     lastGestureCompletedMs = System.currentTimeMillis();
+-                    diagEvent("SCROLL-GESTURE: completed");
++                    diagEvent("SCROLL-GESTURE-ONLY: completed");
+                 }
+                 @Override public void onCancelled(GestureDescription gestureDescription) {
+                     lastGestureCancelledMs = System.currentTimeMillis();
+-                    diagEvent("SCROLL-GESTURE: cancelled");
++                    diagEvent("SCROLL-GESTURE-ONLY: cancelled");
+                 }
+             }, callbackHandler);
+         } catch (Throwable t) {
+-            diagEvent("SCROLL-GESTURE: exception=" + t.getClass().getSimpleName());
++            diagEvent("SCROLL-GESTURE-ONLY: exception=" + t.getClass().getSimpleName());
+             return false;
+         }
+     }
+@@ -2382,7 +2349,6 @@
+         }
+     }
+ 
+-    /** v8: gesture used by STATE_REWIND_TO_TOP. Pulls content downward. */
+     private boolean performGestureSwipeDown() {
+         try {
+             int centerX = screenW / 2;

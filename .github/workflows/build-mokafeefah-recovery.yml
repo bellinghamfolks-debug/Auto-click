@@ -1,9 +1,9 @@
-name: Build Mokafeefah Engine 1.16
+name: Build Mokafeefah Engine 1.17
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v116-engine-thread
+      - agent/mokafeefah-v117-verified-scroll
   pull_request:
   workflow_dispatch:
 
@@ -57,8 +57,13 @@ jobs:
         run: |
           cd src/mokafeefah
           patch -p1 --fuzz=0 < ../../recovery-overrides/v116-engine.patch
+
+      - name: Apply 1.17 verified-scroll invariant
+        run: |
+          cd src/mokafeefah
+          patch -p5 --fuzz=0 < ../../recovery-overrides/v117-verified-scroll.patch
           grep -n "versionCode\|versionName" app/build.gradle
-          grep -n "HandlerThread\|CACHE-HYGIENE\|engineThread=\|MokafeefahEngine" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -100
+          grep -n "SCROLL-VERIFY\|SCROLL-ACTION\|lastViewScrolledEventMs\|retaining processed viewport" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -78,7 +83,7 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.16.0-engine-thread-apks
+          name: mokafeefah-v1.17.0-verified-scroll-apks
           path: |
             src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
             src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk

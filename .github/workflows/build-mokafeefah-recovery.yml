@@ -28,9 +28,12 @@ jobs:
           patch -p1 --fuzz=0 < ../../recovery-overrides/service-v113.patch
           cp ../../recovery-overrides/MainActivity-v113.java app/src/main/java/com/mokafeefah/clicker/MainActivity.java
           cp ../../recovery-overrides/activity-main-v113.xml app/src/main/res/layout/activity_main.xml
+          if ! grep -q "import android.os.SystemClock;" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then
+            sed -i '/import android.os.Looper;/a import android.os.SystemClock;' app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+          fi
           sed -i "s/versionCode 32/versionCode 33/" app/build.gradle
           sed -i -E "s/versionName '[^']+'/versionName '1.13.0-recovery'/" app/build.gradle
-          grep -n "STATE_POST_REFRESH_CATCHUP\|TARGET_ARMED\|handlePostRefreshCatchup\|looksLikeTargetScreen" app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+          grep -n "SystemClock\|STATE_POST_REFRESH_CATCHUP\|TARGET_ARMED\|handlePostRefreshCatchup\|looksLikeTargetScreen" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -20
           grep -n "versionCode\|versionName" app/build.gradle
 
       - name: Set up Java 17

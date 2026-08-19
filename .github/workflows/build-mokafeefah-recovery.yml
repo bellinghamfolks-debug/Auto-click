@@ -55,9 +55,8 @@ jobs:
 
       - name: Apply 1.16 engine-thread architecture
         run: |
-          base64 -d recovery-overrides/v116-engine.patch.gz.b64 | gzip -d > /tmp/v116.patch
           cd src/mokafeefah
-          patch -p1 --fuzz=0 < /tmp/v116.patch
+          patch -p1 --fuzz=0 < ../../recovery-overrides/v116-engine.patch
           grep -n "versionCode\|versionName" app/build.gradle
           grep -n "HandlerThread\|CACHE-HYGIENE\|engineThread=\|MokafeefahEngine" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -100
 

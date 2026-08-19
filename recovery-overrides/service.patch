@@ -1,0 +1,326 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -100,6 +100,9 @@
+     // (rewind vs. continue) so refreshContinueMode keeps working.
+     private static final int STATE_REFRESH_FIND_SEARCH_1 = 8;
+     private static final int STATE_REFRESH_FIND_SEARCH_2 = 9;
++    // Restored from the latest APK: after a soft refresh in continue mode,
++    // scroll back down close to the previous position instead of restarting.
++    private static final int STATE_POST_REFRESH_CATCHUP = 10;
+ 
+     // v10.0: latency budgets — relaxed because Mawada's late-session popup
+     // can take 6-7 s to even appear. The previous 2.5 s timeout was firing
+@@ -160,6 +163,10 @@
+     // Mawada's first paint of the fresh list is ~1.5-2 s on average.
+     private static final long SOFT_REFRESH_WAIT_MS = 2500L;
+     private static final long NAV_ONLINE_WAIT_MS    = 2000L;
++    // Restored exactly from latest APK behavior.
++    private static final long CATCHUP_SCROLL_WAIT_MS = 800L;
++    private static final int MAX_CATCHUP_SCROLLS = 20;
++    private static final int SCROLLS_PER_LIKES = 8;
+ 
+     // v1.11: keywords used by the filter-mode profile inspector.
+     // "الملف الشخصي" appears on the popup we get when we tap a member
+@@ -189,7 +196,7 @@
+     // Catching these stops the bot immediately with a clear reason instead
+     // of letting it spin out the no-progress budget silently.
+     private static final String[] END_OF_LIST_HINTS = {
+-            "لا يوجد المزيد", "وصلت إلى النهاية", "انتهت",
++            "لا يوجد المزيد", "وصلت إلى النهاية",
+             "لا توجد نتائج", "لا يوجد أعضاء"
+     };
+ 
+@@ -256,6 +263,14 @@
+     private int    likesAtLastScroll       = 0;
+     private int    rewindStepsDone         = 0;
+     private int    scrollPatternIndex      = 0; // rotates 0,1,2 within a streak
++    // Latest-APK continuation state + long-session recovery counters.
++    private int    catchUpScrollsRemaining = 0;
++    private int    idleRecoveryCount = 0;
++    private int    endOfListConfirmations = 0;
++    private long   lastPerfLogMs = 0L;
++    private long   tickCount = 0L;
++    private long   slowTickCount = 0L;
++    private long   maxTickDurationMs = 0L;
+     // v10.0: confirmed likes since the most recent soft refresh. When this
+     // reaches LIKES_PER_SOFT_REFRESH we switch into STATE_SOFT_REFRESH to
+     // tap Mawada's own "members" tab and reset its WebView DOM.
+@@ -301,11 +316,20 @@
+         @Override public void run() {
+             if (!running.get()) return;
+             long nextDelay;
++            long tickStarted = android.os.SystemClock.uptimeMillis();
+             try {
+                 nextDelay = performOneTick();
+             } catch (Throwable t) {
++                // Never swallow failures silently. Keep the engine alive and
++                // leave a useful breadcrumb in the diagnostic log.
++                diagEvent("TICK_EXCEPTION: " + t.getClass().getSimpleName()
++                        + ": " + String.valueOf(t.getMessage()));
+                 nextDelay = Math.max(1000L, config != null ? config.scanIntervalMs : 1000L);
+             } finally {
++                long duration = android.os.SystemClock.uptimeMillis() - tickStarted;
++                tickCount++;
++                if (duration > maxTickDurationMs) maxTickDurationMs = duration;
++                if (duration > 1000L) slowTickCount++;
+                 drainTickPool();
+             }
+             if (running.get()) {
+@@ -384,6 +408,13 @@
+         rewindStepsDone = 0;
+         scrollPatternIndex = 0;
+         likesSinceRefresh = 0;
++        catchUpScrollsRemaining = 0;
++        idleRecoveryCount = 0;
++        endOfListConfirmations = 0;
++        tickCount = 0L;
++        slowTickCount = 0L;
++        maxTickDurationMs = 0L;
++        lastPerfLogMs = 0L;
+         sessionMemberIds.clear();
+         long now = System.currentTimeMillis();
+         lastButtonFoundMs = now;
+@@ -404,7 +435,8 @@
+                 + " yesText='" + cfg.yesText + "'"
+                 + " dedup=" + cfg.dedupEnabled
+                 + " filterMode=" + (cfg.filterDivorcedWidowedOnly ? "DIV_WID_ONLY" : "ALL")
+-                + " refreshMode=" + (cfg.refreshContinueMode ? "CONTINUE" : "RESTART"));
++                + " refreshMode=" + (cfg.refreshContinueMode ? "CONTINUE" : "RESTART")
++                + " findMode=" + cfg.findMembersMode);
+         running.set(true);
+         notifyUpdate(STATUS_RUNNING);
+         handler.removeCallbacksAndMessages(null);
+@@ -447,6 +479,7 @@
+             case STATE_INSPECT_PROFILE: return "INSPECT";
+             case STATE_REFRESH_FIND_SEARCH_1: return "REFRESH_SEARCH_1";
+             case STATE_REFRESH_FIND_SEARCH_2: return "REFRESH_SEARCH_2";
++            case STATE_POST_REFRESH_CATCHUP: return "CATCHUP";
+             default:                    return "?(" + s + ")";
+         }
+     }
+@@ -483,16 +516,16 @@
+ 
+     private void diagMaybeSnapshot(long now, List<AccessibilityNodeInfo> roots) {
+         if (diagLogStartMs == 0L) return;
+-        if (now - lastSnapshotMs < SNAPSHOT_INTERVAL_MS) return;
+-        lastSnapshotMs = now;
+-        String summary;
+-        try { summary = buildScreenSummary(roots); }
+-        catch (Throwable t) { summary = "(snapshot failed)"; }
+-        long elapsed = now - diagLogStartMs;
+-        // v9.4: same allocation reason as diagEvent — append parts directly.
+-        diagLog.append('\n').append("--- Snapshot @ ").append(elapsed)
+-               .append(" ms | state=").append(stateName(state))
+-               .append(" ---\n").append(summary).append('\n').append('\n');
++        if (now - lastPerfLogMs < SNAPSHOT_INTERVAL_MS) return;
++        lastPerfLogMs = now;
++        Runtime rt = Runtime.getRuntime();
++        long usedKb = (rt.totalMemory() - rt.freeMemory()) / 1024L;
++        diagEvent("PERF: ticks=" + tickCount
++                + " slowTicks=" + slowTickCount
++                + " maxTickMs=" + maxTickDurationMs
++                + " nodesLast=" + nodesVisitedThisTick
++                + " heapUsedKB=" + usedKb
++                + " roots=" + (roots == null ? 0 : roots.size()));
+     }
+ 
+     // ============================================================
+@@ -520,11 +553,21 @@
+         // diagnostic dump has data to record. If we're idle, the dump tells
+         // us exactly what's on screen at the moment of failure.
+         if (now - lastButtonFoundMs > config.idleTimeoutMs) {
+-            diagEvent("AUTO-STOP: idle timeout fired (no buttons for "
+-                    + (now - lastButtonFoundMs) + "ms, limit=" + config.idleTimeoutMs + ")");
+-            autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+-                    getString(R.string.stop_reason_idle), roots);
+-            return config.scanIntervalMs;
++            idleRecoveryCount++;
++            diagEvent("RECOVERY: idle timeout (attempt=" + idleRecoveryCount
++                    + ", idleMs=" + (now - lastButtonFoundMs) + ")");
++            // Do not kill a long session just because the target WebView
++            // temporarily stopped exposing buttons. Force a controlled
++            // refresh path and reset the watchdog clock.
++            lastButtonFoundMs = now;
++            firstNoProgressScrollMs = 0L;
++            processedBounds.clear();
++            if (idleRecoveryCount % 3 == 0) {
++                transitionTo(STATE_SOFT_REFRESH);
++                return 300L;
++            }
++            transitionTo(STATE_MUST_SCROLL);
++            return 300L;
+         }
+ 
+         // v8: detect Mawadda's "no more members" message before doing anything
+@@ -542,10 +585,19 @@
+         if (state != STATE_REWIND_TO_TOP && shouldCheckEol) {
+             lastEndOfListCheckMs = now;
+             if (endOfListVisible(roots)) {
+-                diagEvent("AUTO-STOP: end-of-list message detected on screen");
+-                autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+-                        getString(R.string.stop_reason_end_of_list), roots);
+-                return config.scanIntervalMs;
++                endOfListConfirmations++;
++                diagEvent("EOL candidate visible (" + endOfListConfirmations + "/3)");
++                if (endOfListConfirmations >= 3) {
++                    // Treat this as a recovery signal, not an immediate stop.
++                    // A stale hidden WebView node used to terminate otherwise
++                    // healthy sessions around the 80-100 range.
++                    endOfListConfirmations = 0;
++                    firstNoProgressScrollMs = 0L;
++                    transitionTo(STATE_SOFT_REFRESH);
++                    return 300L;
++                }
++            } else {
++                endOfListConfirmations = 0;
+             }
+         }
+ 
+@@ -589,6 +641,7 @@
+             case STATE_INSPECT_PROFILE: return handleInspectProfile(roots, now);
+             case STATE_REFRESH_FIND_SEARCH_1: return handleRefreshFindSearch(roots, now, 1);
+             case STATE_REFRESH_FIND_SEARCH_2: return handleRefreshFindSearch(roots, now, 2);
++            case STATE_POST_REFRESH_CATCHUP: return handlePostRefreshCatchup(roots, now);
+             default:
+                 transitionTo(STATE_LOOK_LIKE);
+                 return config.scanIntervalMs;
+@@ -697,6 +750,7 @@
+                 processedBounds.add(key);
+                 likesCount.incrementAndGet();
+                 likesSinceRefresh++;
++                idleRecoveryCount = 0;
+                 if (fp != null && db != null) db.markLiked(fp);
+                 if (looseId != null) sessionMemberIds.add(looseId);
+                 diagEvent("LOOK: clicked like-btn at " + key + " (likes now "
+@@ -857,6 +911,7 @@
+             setAction(getString(R.string.action_yes));
+             // The like is committed at this point — record it.
+             likesCount.incrementAndGet();
++            idleRecoveryCount = 0;
+             likesSinceRefresh++;
+             if (pendingProfileFp != null && db != null) db.markLiked(pendingProfileFp);
+             inspectStage = 2;
+@@ -1128,19 +1183,43 @@
+     private long finishNavOnlineNow(long now) {
+         processedBounds.clear();
+         if (config.refreshContinueMode) {
+-            // Resume in place. Dedup (if on) handles skipping already-liked
+-            // members as the bot scans down again.
++            // Restored from the latest APK. Re-rendering the search list
++            // puts us near the top; catch up toward the previous position.
++            int catchup = Math.min(MAX_CATCHUP_SCROLLS,
++                    Math.max(0, likesCount.get() / SCROLLS_PER_LIKES));
++            if (catchup > 0) {
++                catchUpScrollsRemaining = catchup;
++                diagEvent("NAV_ONLINE: catch-up of " + catchup
++                        + " scrolls (likes=" + likesCount.get() + ")");
++                transitionTo(STATE_POST_REFRESH_CATCHUP);
++                return 600L;
++            }
+             diagEvent("NAV_ONLINE: refreshContinueMode=ON, resuming LOOK_LIKE");
+             transitionTo(STATE_LOOK_LIKE);
+             return 600L;
+         }
+-        // Restart from top: rewind back to row #1 of the fresh list.
+         diagEvent("NAV_ONLINE: refreshContinueMode=OFF, rewinding to top");
+         rewindStepsDone = 0;
+         transitionTo(STATE_REWIND_TO_TOP);
+         return 600L;
+     }
+ 
++    private long handlePostRefreshCatchup(List<AccessibilityNodeInfo> roots, long now) {
++        if (catchUpScrollsRemaining <= 0) {
++            diagEvent("CATCHUP: done, resuming LOOK");
++            transitionTo(STATE_LOOK_LIKE);
++            return 300L;
++        }
++        boolean scrolled = performSmartScroll(roots, scrollPatternIndex);
++        scrollPatternIndex = (scrollPatternIndex + 1) % 3;
++        catchUpScrollsRemaining--;
++        diagEvent("CATCHUP: scrolled (remaining=" + catchUpScrollsRemaining
++                + ", result=" + scrolled + ")");
++        setAction(getString(R.string.action_scroll));
++        lastButtonFoundMs = now;
++        return CATCHUP_SCROLL_WAIT_MS;
++    }
++
+     /**
+      * v1.12 — three-dots refresh entry. Looks up the saved 'ثلاث نقاط'
+      * coordinate and dispatches a gesture tap. The menu button has empty
+@@ -1321,10 +1400,11 @@
+             // clear reason.
+             if (firstNoProgressScrollMs == 0L) firstNoProgressScrollMs = now;
+             if (now - firstNoProgressScrollMs > NO_PROGRESS_BUDGET_MS) {
+-                diagEvent("AUTO-STOP: 3-min no-progress budget exhausted");
+-                autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+-                        getString(R.string.stop_reason_no_progress), roots);
+-                return config.scanIntervalMs;
++                diagEvent("RECOVERY: 3-min no-progress budget exhausted; forcing refresh");
++                firstNoProgressScrollMs = 0L;
++                processedBounds.clear();
++                transitionTo(STATE_SOFT_REFRESH);
++                return 300L;
+             }
+         }
+         likesAtLastScroll = curLikes;
+@@ -1476,7 +1556,33 @@
+         List<String> needles = new ArrayList<>(END_OF_LIST_HINTS.length);
+         for (String s : END_OF_LIST_HINTS) needles.add(normalizeArabic(s));
+         for (AccessibilityNodeInfo root : roots) {
+-            if (containsAnyText(root, needles, 0)) return true;
++            if (containsAnyVisibleText(root, needles, 0)) return true;
++        }
++        return false;
++    }
++
++    private boolean containsAnyVisibleText(AccessibilityNodeInfo node,
++                                           List<String> needles, int depth) {
++        if (node == null || depth > MAX_TREE_DEPTH) return false;
++        if (++keywordScanThisTick > MAX_NODES_PER_TICK) return false;
++        if (node.isVisibleToUser()) {
++            CharSequence text = node.getText();
++            CharSequence desc = node.getContentDescription();
++            if (text != null) {
++                String hay = normalizeArabic(text.toString());
++                for (String n : needles) if (hay.equals(n) || hay.contains(n)) return true;
++            }
++            if (desc != null) {
++                String hay = normalizeArabic(desc.toString());
++                for (String n : needles) if (hay.equals(n) || hay.contains(n)) return true;
++            }
++        }
++        int count = node.getChildCount();
++        for (int i = 0; i < count; i++) {
++            AccessibilityNodeInfo child = node.getChild(i);
++            if (child == null) continue;
++            track(child);
++            if (containsAnyVisibleText(child, needles, depth + 1)) return true;
+         }
+         return false;
+     }
+@@ -2177,6 +2283,25 @@
+      * /sdcard/Android/data/com.mokafeefah.clicker/files/ — accessible
+      * via Android's Files app on all versions, no permission needed.
+      */
++    public String captureDiagnosticNow() {
++        List<AccessibilityNodeInfo> roots = null;
++        try {
++            roots = collectAllRoots();
++            String summary = buildScreenSummary(roots);
++            String path = writeAccessibilityDump(roots,
++                    "طلب تشخيص يدوي", summary);
++            lastDumpPath = path == null ? "" : path;
++            diagEvent("MANUAL_DIAGNOSTIC: " + lastDumpPath);
++            return lastDumpPath;
++        } catch (Throwable t) {
++            diagEvent("MANUAL_DIAGNOSTIC_FAILED: "
++                    + t.getClass().getSimpleName() + ": " + t.getMessage());
++            return "";
++        } finally {
++            drainTickPool();
++        }
++    }
++
+     private void autoStopWithDiagnostic(String status, String reasonBase,
+                                         List<AccessibilityNodeInfo> roots) {
+         String summary;

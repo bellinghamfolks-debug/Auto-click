@@ -1,9 +1,9 @@
-name: Build Mokafeefah Reconstructed 1.13
+name: Build Mokafeefah Recovery 1.13.1
 
 on:
   push:
     branches:
-      - agent/mokafeefah-reconstructed-v113c
+      - agent/mokafeefah-v1131-fix
   pull_request:
   workflow_dispatch:
 
@@ -33,7 +33,14 @@ jobs:
           fi
           sed -i "s/versionCode 32/versionCode 33/" app/build.gradle
           sed -i -E "s/versionName '[^']+'/versionName '1.13.0-recovery'/" app/build.gradle
-          grep -n "SystemClock\|STATE_POST_REFRESH_CATCHUP\|TARGET_ARMED\|handlePostRefreshCatchup\|looksLikeTargetScreen" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -20
+
+      - name: Apply 1.13.1 stall and target safety fix
+        run: |
+          base64 -d recovery-overrides/v1131.patch.gz.b64 | gzip -d > /tmp/v1131.patch
+          cd src/mokafeefah
+          patch -p1 --fuzz=0 < /tmp/v1131.patch
+          grep -n "sessionTargetPackage\|OFF_TARGET\|NO_PROGRESS_SCROLL_LIMIT\|STALL:" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -30
+          grep -n "btnStop\|stopAutomation" app/src/main/java/com/mokafeefah/clicker/MainActivity.java app/src/main/res/layout/activity_main.xml
           grep -n "versionCode\|versionName" app/build.gradle
 
       - name: Set up Java 17
@@ -54,6 +61,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.13.0-reconstructed-debug
+          name: mokafeefah-v1.13.1-recovery-debug
           path: src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

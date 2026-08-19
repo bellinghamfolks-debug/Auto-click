@@ -1,0 +1,169 @@
+diff -ruN /mnt/data/v116_inspect/v116_work/app/build.gradle /mnt/data/v117_work/app/build.gradle
+--- /mnt/data/v116_inspect/v116_work/app/build.gradle	2026-08-19 11:42:48.000000000 +0000
++++ /mnt/data/v117_work/app/build.gradle	2026-08-19 12:14:03.604986045 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 37
+-        versionName '1.16.0-engine-thread'
++        versionCode 38
++        versionName '1.17.0-verified-scroll'
+     }
+ 
+     buildTypes {
+diff -ruN /mnt/data/v116_inspect/v116_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java /mnt/data/v117_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+--- /mnt/data/v116_inspect/v116_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 11:42:24.000000000 +0000
++++ /mnt/data/v117_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 12:14:03.605170910 +0000
+@@ -343,7 +343,19 @@
+                 visibleNodes++;
+                 if (scrollableCache == null) {
+                     try {
+-                        if (node.isScrollable()) scrollableCache = node;
++                        boolean canScroll = node.isScrollable();
++                        List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
++                        if (actions != null) {
++                            for (AccessibilityNodeInfo.AccessibilityAction action : actions) {
++                                int id = action.getId();
++                                if (id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
++                                        || id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.getId()) {
++                                    canScroll = true;
++                                    break;
++                                }
++                            }
++                        }
++                        if (canScroll) scrollableCache = node;
+                     } catch (Throwable ignore) {}
+                 }
+                 addLabel(node, node.getText(), r);
+@@ -548,6 +560,7 @@
+     private String pendingScrollSignature = null;
+     private int    unchangedViewportScrolls = 0;
+     private static final int UNCHANGED_VIEWPORT_LIMIT = 3;
++    private volatile long lastViewScrolledEventMs = 0L;
+ 
+     // A dispatched gesture only means Android accepted the gesture, not that
+     // the list actually advanced. Count no-like scroll cycles and recover
+@@ -697,8 +710,14 @@
+ 
+     @Override
+     public void onAccessibilityEvent(AccessibilityEvent event) {
+-        // Intentionally a no-op. We poll via the tick handler; reacting to
+-        // every event makes the service unresponsive on busy screens.
++        // Keep event handling intentionally tiny. We still poll for state, but
++        // remember genuine scroll notifications as an extra diagnostic signal.
++        if (event == null || event.getEventType() != AccessibilityEvent.TYPE_VIEW_SCROLLED) return;
++        CharSequence pkg = event.getPackageName();
++        if (pkg != null && !sessionTargetPackage.isEmpty()
++                && sessionTargetPackage.equals(pkg.toString())) {
++            lastViewScrolledEventMs = System.currentTimeMillis();
++        }
+     }
+ 
+     @Override
+@@ -2033,14 +2052,18 @@
+             pendingScrollSignature = beforeSignature;
+             diagEvent("SCROLL: tapped load-more; awaiting viewport verification");
+             setAction(getString(R.string.action_load_more));
+-            processedBounds.clear();
++            // Do NOT clear processedBounds here. The viewport has not been
++            // proven to move yet. Clearing early makes the same visible cards
++            // eligible again when pagination/scrolling stalls.
+             transitionTo(STATE_LOOK_LIKE);
+             return POST_SCROLL_WAIT_MS;
+         }
+ 
+         boolean scrolled = performSmartScroll(roots, scrollPatternIndex);
+         diagEvent("SCROLL: pattern=" + scrollPatternIndex + " dispatched=" + scrolled
+-                + " anchor=" + shortSig(beforeSignature));
++                + " anchor=" + shortSig(beforeSignature)
++                + " lastViewScrolledAgeMs="
++                + (lastViewScrolledEventMs == 0L ? -1L : Math.max(0L, now - lastViewScrolledEventMs)));
+         if (scrolled) {
+             pendingScrollSignature = beforeSignature;
+             setAction(getString(R.string.action_scroll));
+@@ -2053,7 +2076,8 @@
+         }
+         scrollPatternIndex = (scrollPatternIndex + 1) % 3;
+ 
+-        processedBounds.clear();
++        // Keep the current viewport's processed set until the next tick
++        // verifies that member content actually changed.
+         transitionTo(STATE_LOOK_LIKE);
+ 
+         if (unchangedViewportScrolls >= UNCHANGED_VIEWPORT_LIMIT) {
+@@ -2078,17 +2102,24 @@
+         // flight. Avoid a false stall; the next normal state pass will decide.
+         if (before.isEmpty() || after.isEmpty()) {
+             diagEvent("SCROLL-VERIFY: anchor unavailable before=" + shortSig(before)
+-                    + " after=" + shortSig(after));
+-            return false;
++                    + " after=" + shortSig(after)
++                    + " — retaining processed viewport set");
++            // A pending scroll was consumed. Stop this tick so LOOK cannot
++            // immediately replay the same controls while rendering settles.
++            return true;
+         }
+ 
+         if (!before.equals(after)) {
+             unchangedViewportScrolls = 0;
+             firstNoProgressScrollMs = 0L;
+             consecutiveNoProgressScrolls = 0;
++            processedBounds.clear();
+             diagEvent("SCROLL-VERIFY: viewport advanced " + shortSig(before)
+-                    + " -> " + shortSig(after));
+-            return false;
++                    + " -> " + shortSig(after)
++                    + " — cleared processed set for NEW viewport");
++            // Do not scan/click in the same tick that validated movement.
++            // Build a fresh snapshot on the next cycle.
++            return true;
+         }
+ 
+         unchangedViewportScrolls++;
+@@ -2106,7 +2137,11 @@
+             recoverFromViewportStall(roots, now, "long no-progress watchdog");
+             return true;
+         }
+-        return false;
++
++        // Crucial invariant: an unchanged viewport keeps processedBounds and
++        // consumes this tick. The next cycle goes back to MUST_SCROLL instead
++        // of clicking the same cards again.
++        return true;
+     }
+ 
+     private long recoverFromViewportStall(
+@@ -2167,17 +2202,28 @@
+      * recognises as "user wants more".
+      */
+     private boolean performSmartScroll(List<AccessibilityNodeInfo> roots, int patternIndex) {
+-        boolean acted = false;
+         AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
+         if (scrollable != null) {
+             try {
+                 if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+-                    acted = true;
++                    diagEvent("SCROLL-ACTION: ACTION_SCROLL_FORWARD accepted");
++                    return true;
++                }
++            } catch (Throwable ignore) {}
++            try {
++                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
++                        && scrollable.performAction(
++                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.getId())) {
++                    diagEvent("SCROLL-ACTION: ACTION_SCROLL_DOWN accepted");
++                    return true;
+                 }
+             } catch (Throwable ignore) {}
+         }
+-        boolean gestured = performGestureSwipeUp(patternIndex);
+-        return acted || gestured;
++
++        // Only fall back to a finger gesture when the semantic scroll actions
++        // were unavailable/rejected. Never stack an accessibility scroll and
++        // a gesture in the same tick.
++        return performGestureSwipeUp(patternIndex);
+     }
+ 
+     private boolean performGestureSwipeUp(int patternIndex) {

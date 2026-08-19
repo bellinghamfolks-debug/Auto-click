@@ -22,6 +22,13 @@ jobs:
       - name: Unpack source
         run: unzip -q mokafeefah-v1.12.15-source.zip -d src
 
+      - name: Apply compiler fix
+        run: |
+          FILE="src/mokafeefah/app/src/main/java/com/mokafeefah/clicker/ClickerService.java"
+          if ! grep -q 'import android.os.SystemClock;' "$FILE"; then
+            sed -i '/import android.os.Looper;/a import android.os.SystemClock;' "$FILE"
+          fi
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:

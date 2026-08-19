@@ -61,7 +61,7 @@ jobs:
       - name: Apply 1.17 verified-scroll invariant
         run: |
           cd src/mokafeefah
-          patch -p5 --fuzz=0 < ../../recovery-overrides/v117-verified-scroll.patch
+          patch -p4 --fuzz=0 < ../../recovery-overrides/v117-verified-scroll.patch
           grep -n "versionCode\|versionName" app/build.gradle
           grep -n "SCROLL-VERIFY\|SCROLL-ACTION\|lastViewScrolledEventMs\|retaining processed viewport" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
 

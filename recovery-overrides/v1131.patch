@@ -1,0 +1,273 @@
+diff -ruN v113_orig/app/build.gradle v113_fix/app/build.gradle
+--- v113_orig/app/build.gradle	2026-08-19 08:33:08.000000000 +0000
++++ v113_fix/app/build.gradle	2026-08-19 09:12:01.614392780 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 33
+-        versionName '1.13.0-recovery'
++        versionCode 34
++        versionName '1.13.1-recovery'
+     }
+ 
+     buildTypes {
+diff -ruN v113_orig/app/src/main/java/com/mokafeefah/clicker/ClickerService.java v113_fix/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+--- v113_orig/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 08:33:08.000000000 +0000
++++ v113_fix/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 09:11:50.645244620 +0000
+@@ -275,6 +275,19 @@
+     private int    catchUpScrollsRemaining = 0;
+     private int    idleRecoveryCount       = 0;
+     private boolean targetScreenArmed      = false;
++
++    // v1.13.1: once the real target screen is seen, pin the session to the
++    // package that owns the ACTIVE window. The old implementation searched
++    // every interactive window and would keep dispatching global gestures
++    // after the user opened Mokafeefah, the launcher, or System UI.
++    private String sessionTargetPackage    = "";
++    private long   offTargetSinceMs        = 0L;
++
++    // A dispatched gesture only means Android accepted the gesture, not that
++    // the list actually advanced. Count no-like scroll cycles and recover
++    // quickly instead of spinning for the old 3-minute budget.
++    private int consecutiveNoProgressScrolls = 0;
++    private static final int NO_PROGRESS_SCROLL_LIMIT = 5;
+     // v10.0: confirmed likes since the most recent soft refresh. When this
+     // reaches LIKES_PER_SOFT_REFRESH we switch into STATE_SOFT_REFRESH to
+     // tap Mawada's own "members" tab and reset its WebView DOM.
+@@ -417,6 +430,9 @@
+         catchUpScrollsRemaining = 0;
+         idleRecoveryCount = 0;
+         targetScreenArmed = false;
++        sessionTargetPackage = "";
++        offTargetSinceMs = 0L;
++        consecutiveNoProgressScrolls = 0;
+         likesSinceRefresh = 0;
+         endOfListConfirmations = 0;
+         firstEndOfListConfirmationMs = 0L;
+@@ -576,14 +592,46 @@
+         // This prevents Start from acting on Mokafeefah, the launcher, or the
+         // notification shade while the user is switching to the target app.
+         if (!targetScreenArmed) {
+-            if (!looksLikeTargetScreen(roots)) {
++            String detectedPackage = detectTargetPackage(roots);
++            if (detectedPackage.isEmpty()) {
+                 lastButtonFoundMs = now; // waiting to arm is not an idle failure
+                 setAction(getString(R.string.action_wait));
+                 return 500L;
+             }
+             targetScreenArmed = true;
++            sessionTargetPackage = detectedPackage;
++            offTargetSinceMs = 0L;
+             lastButtonFoundMs = now;
+-            diagEvent("TARGET_ARMED: expected target controls detected");
++            diagEvent("TARGET_ARMED: active package pinned to " + sessionTargetPackage);
++        }
++
++        // Hard safety gate: global gestures act on the ACTIVE window, not on
++        // whichever AccessibilityNodeInfo happened to be found in getWindows().
++        // If the user switches away, pause completely. Do not scroll, BACK,
++        // tap load-more, refresh, or touch System UI. Resume automatically when
++        // the same target package becomes active again.
++        if (!sessionTargetPackage.isEmpty()) {
++            String activePackage = getActivePackageName();
++            if (!sessionTargetPackage.equals(activePackage)) {
++                if (offTargetSinceMs == 0L) {
++                    offTargetSinceMs = now;
++                    diagEvent("OFF_TARGET: active=" + activePackage
++                            + " expected=" + sessionTargetPackage + " — pausing all actions");
++                }
++                lastButtonFoundMs = now; // off-target waiting is not an idle failure
++                setAction(getString(R.string.action_wait));
++                return 500L;
++            }
++            if (offTargetSinceMs != 0L) {
++                diagEvent("TARGET_RESUMED after " + (now - offTargetSinceMs) + " ms");
++                offTargetSinceMs = 0L;
++            }
++            roots = rootsForPackage(roots, sessionTargetPackage);
++            if (roots.isEmpty()) {
++                lastButtonFoundMs = now;
++                setAction(getString(R.string.action_wait));
++                return 350L;
++            }
+         }
+ 
+         diagMaybeSnapshot(now, roots);
+@@ -793,7 +841,8 @@
+             if (performClick(likeBtn)) {
+                 processedBounds.add(key);
+                 likesCount.incrementAndGet();
+-            idleRecoveryCount = 0;
++                idleRecoveryCount = 0;
++                consecutiveNoProgressScrolls = 0;
+                 likesSinceRefresh++;
+                 if (fp != null && db != null) db.markLiked(fp);
+                 if (looseId != null) sessionMemberIds.add(looseId);
+@@ -1433,16 +1482,47 @@
+     private long handleMustScroll(List<AccessibilityNodeInfo> roots, long now) {
+         int curLikes = likesCount.get();
+         if (curLikes != likesAtLastScroll) {
+-            // Real progress since the last scroll — reset the stuck clock.
++            // Real progress since the last scroll — reset all stuck counters.
+             firstNoProgressScrollMs = 0L;
++            consecutiveNoProgressScrolls = 0;
+             scrollPatternIndex = 0;
+         } else {
+-            // No new likes since we last entered this state. Start (or keep)
+-            // the no-progress timer; if it exceeds the budget, stop with a
+-            // clear reason.
++            // A successful dispatchGesture() is not proof that the list moved.
++            // The 11:58 diagnostic showed many result=true scrolls with the like
++            // count frozen. Recover after a short bounded streak instead of
++            // spinning on the same screen indefinitely.
++            consecutiveNoProgressScrolls++;
+             if (firstNoProgressScrollMs == 0L) firstNoProgressScrollMs = now;
++
++            if (consecutiveNoProgressScrolls >= NO_PROGRESS_SCROLL_LIMIT) {
++                String summary;
++                try { summary = buildScreenSummary(roots); }
++                catch (Throwable t) { summary = "(stall summary failed)"; }
++                diagEvent("STALL: " + consecutiveNoProgressScrolls
++                        + " scroll cycles with no new like | " + summary);
++                try {
++                    String path = writeAccessibilityDump(
++                            roots,
++                            "استرداد تلقائي — التمرير لم يحقق تقدماً",
++                            summary);
++                    if (path != null && !path.isEmpty()) lastDumpPath = path;
++                } catch (Throwable t) {
++                    diagEvent("STALL-DUMP failed: " + t.getClass().getSimpleName());
++                }
++
++                consecutiveNoProgressScrolls = 0;
++                firstNoProgressScrollMs = 0L;
++                processedBounds.clear();
++                scrollPatternIndex = 0;
++                diagEvent("RECOVERY: bounded no-progress streak; forcing safe refresh");
++                transitionTo(STATE_SOFT_REFRESH);
++                return 350L;
++            }
++
++            // Keep the longer watchdog as a final fallback.
+             if (now - firstNoProgressScrollMs > NO_PROGRESS_BUDGET_MS) {
+-                diagEvent("RECOVERY: 3-min no-progress budget exhausted; forcing refresh");
++                diagEvent("RECOVERY: long no-progress budget exhausted; forcing refresh");
++                consecutiveNoProgressScrolls = 0;
+                 firstNoProgressScrollMs = 0L;
+                 processedBounds.clear();
+                 transitionTo(STATE_SOFT_REFRESH);
+@@ -1638,7 +1718,19 @@
+     // ============================================================
+ 
+     private boolean looksLikeTargetScreen(List<AccessibilityNodeInfo> roots) {
++        return !detectTargetPackage(roots).isEmpty();
++    }
++
++    /**
++     * Returns the ACTIVE package only when that package's own root contains
++     * expected target controls. This prevents a target window behind another
++     * app from arming the service.
++     */
++    private String detectTargetPackage(List<AccessibilityNodeInfo> roots) {
+         keywordScanThisTick = 0;
++        String activePackage = getActivePackageName();
++        if (activePackage.isEmpty() || activePackage.equals(getPackageName())) return "";
++
+         List<String> needles = new ArrayList<>();
+         String like = normalizeArabic(config.likeText);
+         if (!like.isEmpty()) needles.add(like);
+@@ -1651,10 +1743,39 @@
+                 if (!n.isEmpty()) needles.add(n);
+             }
+         }
++
+         for (AccessibilityNodeInfo root : roots) {
+-            if (containsAnyVisibleText(root, needles, 0)) return true;
++            if (root == null) continue;
++            CharSequence pkg = root.getPackageName();
++            if (pkg == null || !activePackage.equals(pkg.toString())) continue;
++            if (containsAnyVisibleText(root, needles, 0)) return activePackage;
+         }
+-        return false;
++        return "";
++    }
++
++    private String getActivePackageName() {
++        AccessibilityNodeInfo active = null;
++        try {
++            active = getRootInActiveWindow();
++            if (active == null) return "";
++            track(active);
++            CharSequence pkg = active.getPackageName();
++            return pkg == null ? "" : pkg.toString();
++        } catch (Throwable t) {
++            return "";
++        }
++    }
++
++    private List<AccessibilityNodeInfo> rootsForPackage(
++            List<AccessibilityNodeInfo> roots, String packageName) {
++        List<AccessibilityNodeInfo> filtered = new ArrayList<>();
++        if (roots == null || packageName == null || packageName.isEmpty()) return filtered;
++        for (AccessibilityNodeInfo root : roots) {
++            if (root == null) continue;
++            CharSequence pkg = root.getPackageName();
++            if (pkg != null && packageName.equals(pkg.toString())) filtered.add(root);
++        }
++        return filtered;
+     }
+ 
+     // ============================================================
+diff -ruN v113_orig/app/src/main/java/com/mokafeefah/clicker/MainActivity.java v113_fix/app/src/main/java/com/mokafeefah/clicker/MainActivity.java
+--- v113_orig/app/src/main/java/com/mokafeefah/clicker/MainActivity.java	2026-08-19 08:33:08.000000000 +0000
++++ v113_fix/app/src/main/java/com/mokafeefah/clicker/MainActivity.java	2026-08-19 09:12:01.614209287 +0000
+@@ -45,10 +45,12 @@
+         } catch (Throwable ignored) {}
+ 
+         Button start = findViewById(R.id.btnStart);
++        Button stop = findViewById(R.id.btnStop);
+         Button accessibility = findViewById(R.id.btnOpenAccessibility);
+         Button diagnostic = findViewById(R.id.btnShareDiagnostic);
+ 
+         start.setOnClickListener(v -> startAutomation());
++        stop.setOnClickListener(v -> stopAutomation());
+         accessibility.setOnClickListener(v -> openAccessibilitySettings());
+         diagnostic.setOnClickListener(v -> shareDiagnostic());
+     }
+@@ -85,6 +87,16 @@
+         else toast("تعذر بدء التشغيل");
+     }
+ 
++    private void stopAutomation() {
++        ClickerService svc = ClickerService.getInstance();
++        if (svc == null || !svc.isExecuting()) {
++            toast("التشغيل متوقف بالفعل");
++            return;
++        }
++        svc.stopBot();
++        toast("تم إيقاف التشغيل");
++    }
++
+     private void openAccessibilitySettings() {
+         Intent i = new Intent("android.settings.ACCESSIBILITY_SETTINGS");
+         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+diff -ruN v113_orig/app/src/main/res/layout/activity_main.xml v113_fix/app/src/main/res/layout/activity_main.xml
+--- v113_orig/app/src/main/res/layout/activity_main.xml	2026-08-19 08:33:08.000000000 +0000
++++ v113_fix/app/src/main/res/layout/activity_main.xml	2026-08-19 09:12:01.614342916 +0000
+@@ -18,6 +18,15 @@
+         android:layout_marginBottom="18dp" />
+ 
+     <Button
++        android:id="@+id/btnStop"
++        android:layout_width="match_parent"
++        android:layout_height="64dp"
++        android:text="إيقاف"
++        android:textSize="19sp"
++        android:contentDescription="إيقاف التشغيل"
++        android:layout_marginBottom="18dp" />
++
++    <Button
+         android:id="@+id/btnOpenAccessibility"
+         android:layout_width="match_parent"
+         android:layout_height="64dp"

@@ -36,10 +36,12 @@ public class MainActivity extends AppCompatActivity {
         } catch (Throwable ignored) {}
 
         Button start = findViewById(R.id.btnStart);
+        Button stop = findViewById(R.id.btnStop);
         Button accessibility = findViewById(R.id.btnOpenAccessibility);
         Button diagnostic = findViewById(R.id.btnShareDiagnostic);
 
         start.setOnClickListener(v -> startAutomation());
+        stop.setOnClickListener(v -> stopAutomation());
         accessibility.setOnClickListener(v -> openAccessibilitySettings());
         diagnostic.setOnClickListener(v -> shareDiagnostic());
     }
@@ -67,6 +69,16 @@ public class MainActivity extends AppCompatActivity {
         } else {
             toast("تعذر بدء التشغيل");
         }
+    }
+
+    private void stopAutomation() {
+        ClickerService svc = ClickerService.getInstance();
+        if (svc == null || !svc.isExecuting()) {
+            toast("التشغيل متوقف بالفعل");
+            return;
+        }
+        svc.stopBot();
+        toast("تم إيقاف التشغيل");
     }
 
     private void openAccessibilitySettings() {

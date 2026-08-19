@@ -1,0 +1,159 @@
+diff -ruN v121_work/app/build.gradle v122_work/app/build.gradle
+--- v121_work/app/build.gradle	2026-08-19 15:31:00.246250450 +0000
++++ v122_work/app/build.gradle	2026-08-19 16:30:49.440193641 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 42
+-        versionName '1.21.0-lean-popup'
++        versionCode 43
++        versionName '1.22.0-confirmation-state-fix'
+     }
+ 
+     buildTypes {
+diff -ruN v121_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java v122_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+--- v121_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 15:31:57.948577966 +0000
++++ v122_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 16:31:09.062187022 +0000
+@@ -121,9 +121,9 @@
+     // v10.0: latency budgets — relaxed because Mawada's late-session popup
+     // can take 6-7 s to even appear. The previous 2.5 s timeout was firing
+     // a stale AFTER_LIKE → LOOK transition before "نعم" had rendered, then
+-    // LOOK had to redo the work. Pushed to 8 s — still bounded, but no
++    // LOOK had to redo the work. Pushed to 15 s — still bounded, but no
+     // longer racing Mawada's worst-case render.
+-    private static final long MAX_WAIT_AFTER_LIKE_MS = 8000L;
++    private static final long MAX_WAIT_AFTER_LIKE_MS = 15000L;
+     private static final long MAX_WAIT_AFTER_YES_MS  = 8000L;
+     // 1.21: a successful accessibility click is only a request. On a very
+     // large WebView the confirmation layer can remain on screen after the
+@@ -131,6 +131,11 @@
+     // on a blind timeout.
+     private static final long AFTER_YES_RETRY_INTERVAL_MS = 1800L;
+     private static final int  AFTER_YES_MAX_RETRIES = 2;
++    // v1.22: absence of popup controls for a sustained interval is accepted
++    // as bounded negative proof of dismissal. This prevents AFTER_YES from
++    // becoming an absorbing state when WebView native text search misses the
++    // restored list after the user (or Mawada) closes the modal.
++    private static final long AFTER_YES_NO_POPUP_PROOF_MS = 2500L;
+     private static final long STALL_FULL_DUMP_INTERVAL_MS = 120_000L;
+     private static final long POST_BACK_WAIT_MS      = 900L;
+     private static final long POST_SCROLL_WAIT_MS    = 1800L;
+@@ -587,6 +592,7 @@
+     private long lastAutoStallFullDumpMs = 0L;
+     private long lastAfterYesRetryMs = 0L;
+     private int afterYesRetryCount = 0;
++    private long afterYesNoPopupSinceMs = 0L;
+     private int consecutiveTickErrors = 0;
+     private int    state = STATE_LOOK_LIKE;
+     private long   stateChangedAt = 0L;
+@@ -913,6 +919,13 @@
+         int oldState = this.state;
+         this.state = newState;
+         this.stateChangedAt = System.currentTimeMillis();
++        // v1.22: every AFTER_YES episode owns its dismissal-proof timer.
++        // Never carry absence evidence across popup episodes.
++        if (newState == STATE_AFTER_YES && oldState != STATE_AFTER_YES) {
++            afterYesNoPopupSinceMs = 0L;
++        } else if (oldState == STATE_AFTER_YES && newState != STATE_AFTER_YES) {
++            afterYesNoPopupSinceMs = 0L;
++        }
+         if (oldState != newState) diagEvent("transition " + stateName(oldState) + " -> " + stateName(newState));
+     }
+ 
+@@ -1234,12 +1247,33 @@
+         // outside the results list. Long-session cache hygiene is handled
+         // independently; count-based navigation is intentionally disabled.
+         AccessibilityNodeInfo yes = findClickableInAll(roots, config.yesText);
+-        if (yes != null && performClick(yes)) {
+-            if (pendingLikeStartedMs != 0L) commitPendingLike(now, "LOOK stray confirmation");
+-            setAction(getString(R.string.action_yes));
+-            lastButtonFoundMs = now;
+-            transitionTo(STATE_AFTER_YES);
+-            return 700L;
++        if (yes != null) {
++            // v1.22: never confirm an orphan popup after AFTER_LIKE already
++            // rolled its transaction back. 1.21 could time out at 8 s, see a
++            // late نعم a few hundred milliseconds later, click it from LOOK
++            // with no pending transaction, then strand itself in AFTER_YES.
++            if (pendingLikeStartedMs == 0L) {
++                AccessibilityNodeInfo orphanClose = findClickableInAll(roots, config.closeText);
++                if (orphanClose != null && performClick(orphanClose)) {
++                    diagEvent("LOOK: orphan confirmation closed without committing a like");
++                    setAction(getString(R.string.action_close));
++                    return 700L;
++                }
++                diagEvent("LOOK: orphan confirmation visible; refusing stray YES click");
++                setAction(getString(R.string.action_wait));
++                return 500L;
++            }
++            if (performClick(yes)) {
++                commitPendingLike(now, "LOOK late owned confirmation");
++                diagEvent("LOOK: late owned confirmation clicked and committed");
++                setAction(getString(R.string.action_yes));
++                lastButtonFoundMs = now;
++                afterYesRetryCount = 0;
++                lastAfterYesRetryMs = now;
++                transitionTo(STATE_AFTER_YES);
++                return 700L;
++            }
++            return config.scanIntervalMs;
+         }
+         AccessibilityNodeInfo close = findClickableInAll(roots, config.closeText);
+         if (close != null && performClick(close)) {
+@@ -1751,6 +1785,7 @@
+         // accepting the confirmation. Close it and only then return to LOOK.
+         AccessibilityNodeInfo close = findClickableInAll(roots, config.closeText);
+         if (close != null) {
++            afterYesNoPopupSinceMs = 0L;
+             if (performClick(close)) {
+                 diagEvent("AFTER_YES: popup close clicked; dismissal path confirmed");
+                 setAction(getString(R.string.action_close));
+@@ -1767,6 +1802,7 @@
+         // through Accessibility while the modal intercepts every swipe.
+         AccessibilityNodeInfo yesStillVisible = findClickableInAll(roots, config.yesText);
+         if (yesStillVisible != null) {
++            afterYesNoPopupSinceMs = 0L;
+             if (afterYesRetryCount < AFTER_YES_MAX_RETRIES
+                     && now - lastAfterYesRetryMs >= AFTER_YES_RETRY_INTERVAL_MS) {
+                 boolean retried = performClick(yesStillVisible);
+@@ -1784,17 +1820,33 @@
+         if (visibleLike != null) {
+             diagEvent("AFTER_YES: confirmation dismissed; visible like control restored");
+             afterYesRetryCount = 0;
++            afterYesNoPopupSinceMs = 0L;
+             transitionTo(STATE_LOOK_LIKE);
+             return 250L;
+         }
+ 
++        // v1.22: native WebView text lookup is not a perfect dismissal oracle.
++        // The 1.21 diagnostic proved that after the popup was manually closed
++        // neither نعم/إغلاق nor a visible إهتمام was returned, leaving the
++        // engine in AFTER_YES forever. Once BOTH popup controls remain absent
++        // continuously for 2.5 s while the target package is active, accept
++        // that stable absence as bounded negative proof and resume LOOK.
++        if (afterYesNoPopupSinceMs == 0L) {
++            afterYesNoPopupSinceMs = now;
++        }
++        long noPopupAgeMs = now - afterYesNoPopupSinceMs;
++        if (noPopupAgeMs >= AFTER_YES_NO_POPUP_PROOF_MS) {
++            diagEvent("AFTER_YES: popup controls absent for " + noPopupAgeMs
++                    + " ms; bounded dismissal proof accepted");
++            afterYesRetryCount = 0;
++            transitionTo(STATE_LOOK_LIKE);
++            return 300L;
++        }
++
+         if (now - stateChangedAt > MAX_WAIT_AFTER_YES_MS) {
+-            // No confirmation controls and no list controls. Rendering may be
+-            // in flight; remain in the safe popup/wait state rather than
+-            // blindly entering LOOK and dispatching gestures through a modal.
+-            diagEvent("AFTER_YES: no dismissal proof after timeout; staying safe");
+-            stateChangedAt = now; // rate-limit the timeout diagnostic
+-            return 700L;
++            diagEvent("AFTER_YES: awaiting bounded no-popup dismissal proof ageMs="
++                    + noPopupAgeMs);
++            return 500L;
+         }
+ 
+         setAction(getString(R.string.action_wait));

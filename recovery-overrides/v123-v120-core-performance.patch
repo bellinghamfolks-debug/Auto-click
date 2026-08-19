@@ -1,6 +1,6 @@
 diff -ruN /mnt/data/v120_base/app/build.gradle /mnt/data/v123_work/app/build.gradle
---- /mnt/data/v120_base/app/build.gradle	2026-08-19 13:32:00.000000000 +0000
-+++ /mnt/data/v123_work/app/build.gradle	2026-08-19 16:48:35.000000000 +0000
+--- /mnt/data/v120_base/app/build.gradle	2026-08-19 13:31:19.000000000 +0000
++++ /mnt/data/v123_work/app/build.gradle	2026-08-19 16:48:27.921724093 +0000
 @@ -10,8 +10,8 @@
          applicationId 'com.mokafeefah.clicker'
          minSdk 24
@@ -14,7 +14,7 @@ diff -ruN /mnt/data/v120_base/app/build.gradle /mnt/data/v123_work/app/build.gra
      buildTypes {
 diff -ruN /mnt/data/v120_base/app/src/main/java/com/mokafeefah/clicker/ClickerService.java /mnt/data/v123_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
 --- /mnt/data/v120_base/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 13:32:00.000000000 +0000
-+++ /mnt/data/v123_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 16:48:35.000000000 +0000
++++ /mnt/data/v123_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 16:48:27.921251022 +0000
 @@ -125,6 +125,8 @@
      // longer racing Mawada's worst-case render.
      private static final long MAX_WAIT_AFTER_LIKE_MS = 8000L;

@@ -1,0 +1,377 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -125,6 +125,13 @@
+     // longer racing Mawada's worst-case render.
+     private static final long MAX_WAIT_AFTER_LIKE_MS = 8000L;
+     private static final long MAX_WAIT_AFTER_YES_MS  = 8000L;
++    // 1.21: a successful accessibility click is only a request. On a very
++    // large WebView the confirmation layer can remain on screen after the
++    // click callback returns. Re-check the popup instead of escaping to LOOK
++    // on a blind timeout.
++    private static final long AFTER_YES_RETRY_INTERVAL_MS = 1800L;
++    private static final int  AFTER_YES_MAX_RETRIES = 2;
++    private static final long STALL_FULL_DUMP_INTERVAL_MS = 120_000L;
+     private static final long POST_BACK_WAIT_MS      = 900L;
+     private static final long POST_SCROLL_WAIT_MS    = 1800L;
+ 
+@@ -295,9 +302,11 @@
+         int nativeCandidates = 0;
+         int dfsFallbacks = 0; // kept for telemetry compatibility; should stay 0
+         boolean truncated = false;
++        long buildMs = 0L;
+         AccessibilityNodeInfo scrollableCache = null;
+ 
+         VisibleScreenSnapshot(List<AccessibilityNodeInfo> roots) {
++            long buildStarted = SystemClock.uptimeMillis();
+             this.roots = roots == null ? Collections.emptyList() : roots;
+             for (AccessibilityNodeInfo root : this.roots) {
+                 if (root == null || truncated) continue;
+@@ -309,53 +318,53 @@
+                     return y != 0 ? y : Integer.compare(a.left, b.left);
+                 }
+             });
++            buildMs = Math.max(0L, SystemClock.uptimeMillis() - buildStarted);
+         }
+ 
+         private void collectVisible(AccessibilityNodeInfo node, int depth) {
+             if (node == null || depth > MAX_TREE_DEPTH || truncated) return;
+-            visits++;
+-            if (visits > SNAPSHOT_MAX_VISITS) { truncated = true; return; }
+ 
++            // 1.21 lean traversal: bounds are the cheapest useful pruning
++            // signal. Do NOT spend isVisibleToUser()/getClassName() IPC on
++            // every historical off-screen DOM node, and do not let those
++            // rejected nodes consume the 1200-node visible-snapshot budget.
+             Rect r = new Rect();
+             try { node.getBoundsInScreen(r); } catch (Throwable ignore) {}
+             boolean intersects = r.width() > 0 && r.height() > 0
+                     && r.right > 0 && r.bottom > 0
+                     && r.left < screenW && r.top < screenH;
+-            boolean visible = false;
+-            try { visible = node.isVisibleToUser(); } catch (Throwable ignore) {}
+ 
+-            String cls = "";
+-            try {
+-                CharSequence c = node.getClassName();
+-                if (c != null) cls = c.toString();
+-            } catch (Throwable ignore) {}
+-            boolean structuralContainer = cls.contains("WebView")
+-                    || cls.contains("RecyclerView")
+-                    || cls.contains("ScrollView")
+-                    || cls.contains("ListView");
+-
+-            // Past the shallow page wrappers, an off-screen card cannot
+-            // contribute anything to the current viewport. Prune the whole
+-            // subtree here instead of walking its old DOM descendants.
+-            if (depth > 3 && !intersects && !structuralContainer) return;
++            if (depth > 3 && !intersects) {
++                boolean structuralContainer = false;
++                try {
++                    CharSequence c = node.getClassName();
++                    if (c != null) {
++                        String cls = c.toString();
++                        structuralContainer = cls.contains("WebView")
++                                || cls.contains("RecyclerView")
++                                || cls.contains("ScrollView")
++                                || cls.contains("ListView");
++                    }
++                } catch (Throwable ignore) {}
++                if (!structuralContainer) return;
++            }
++
++            visits++;
++            if (visits > SNAPSHOT_MAX_VISITS) { truncated = true; return; }
++
++            boolean visible = false;
++            if (intersects) {
++                try { visible = node.isVisibleToUser(); } catch (Throwable ignore) {}
++            }
+ 
+             if (visible && intersects) {
+                 visibleNodes++;
++                // Gesture-only forward scrolling no longer needs every
++                // AccessibilityAction list. Keep only the cheap native
++                // isScrollable bit for rewind compatibility.
+                 if (scrollableCache == null) {
+                     try {
+-                        boolean canScroll = node.isScrollable();
+-                        List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
+-                        if (actions != null) {
+-                            for (AccessibilityNodeInfo.AccessibilityAction action : actions) {
+-                                int id = action.getId();
+-                                if (id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+-                                        || id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.getId()) {
+-                                    canScroll = true;
+-                                    break;
+-                                }
+-                            }
+-                        }
+-                        if (canScroll) scrollableCache = node;
++                        if (node.isScrollable()) scrollableCache = node;
+                     } catch (Throwable ignore) {}
+                 }
+                 addLabel(node, node.getText(), r);
+@@ -524,7 +533,8 @@
+ 
+         String metrics() {
+             return "visits=" + visits + " visible=" + visibleNodes
+-                    + " labels=" + labels.size() + " truncated=" + truncated;
++                    + " labels=" + labels.size() + " truncated=" + truncated
++                    + " buildMs=" + buildMs;
+         }
+     }
+ 
+@@ -570,8 +580,13 @@
+     // control. We keep the cache enabled for normal traversal efficiency, but
+     // clear it only when measured tick latency stays high. This bounds stale
+     // WebView cache pressure without turning every node lookup into uncached IPC.
++    // Kept only so old diagnostic field names remain readable. 1.21 no
++    // longer clears AccessibilityService cache during a live session.
+     private long lastAccessibilityCacheClearMs = 0L;
+     private int accessibilityCacheClearCount = 0;
++    private long lastAutoStallFullDumpMs = 0L;
++    private long lastAfterYesRetryMs = 0L;
++    private int afterYesRetryCount = 0;
+     private int consecutiveTickErrors = 0;
+     private int    state = STATE_LOOK_LIKE;
+     private long   stateChangedAt = 0L;
+@@ -996,23 +1011,11 @@
+                 + " cacheClears=" + accessibilityCacheClearCount
+                 + " errors=" + consecutiveTickErrors);
+ 
+-        // v1.16 adaptive cache hygiene. Android 13+ exposes clearCache();
+-        // use it only under measured sustained pressure, not every tick.
+-        // This is deliberately conservative: keep normal cache/prefetch
+-        // benefits while discarding stale WebView nodes if average traversal
+-        // latency climbs above the healthy range.
+-        if (Build.VERSION.SDK_INT >= 33
+-                && avgTickMs >= 700L
+-                && now - lastAccessibilityCacheClearMs >= 30_000L) {
+-            boolean cleared = false;
+-            try { cleared = clearCache(); } catch (Throwable ignore) {}
+-            lastAccessibilityCacheClearMs = now;
+-            if (cleared) accessibilityCacheClearCount++;
+-            diagEvent("CACHE-HYGIENE: avgTickMs=" + avgTickMs
+-                    + " clearCache=" + cleared
+-                    + " count=" + accessibilityCacheClearCount);
+-        }
+-
++        // 1.21: do not clear AccessibilityService's cache as a reaction to
++        // slow ticks. The 480-like diagnostic showed this fired >160 times
++        // while the WebView DOM was growing. Clearing the cache forces fresh
++        // node IPC and made a slow tree even more expensive; the visible
++        // snapshot now prunes stale off-screen DOM instead.
+         healthTickTotalMs = 0L;
+         healthTickSamples = 0;
+         healthTickMaxMs = 0L;
+@@ -1091,10 +1094,15 @@
+             }
+         }
+ 
+-        // One cache for the whole tick. Hot-path helpers below reuse native
+-        // framework query results rather than rescanning a growing WebView tree
+-        // independently for profile guards, yes/close, like, end-of-list, etc.
+-        currentProbe = new VisibleScreenSnapshot(roots);
++        // One visible cache for list/navigation states. Confirmation states
++        // deliberately skip the growing WebView traversal and use Android's
++        // native text query for just نعم/إغلاق/إهتمام. This removes an entire
++        // 1000+ node snapshot from every popup wait tick late in a session.
++        if (state == STATE_AFTER_LIKE || state == STATE_AFTER_YES) {
++            currentProbe = null;
++        } else {
++            currentProbe = new VisibleScreenSnapshot(roots);
++        }
+ 
+         // Verify the result of the previous scroll using actual viewport
+         // content. Gesture acceptance is not progress.
+@@ -1704,6 +1712,8 @@
+                 diagEvent("AFTER_LIKE: clicked '" + config.yesText + "' (confirmed)");
+                 setAction(getString(R.string.action_yes));
+                 lastButtonFoundMs = now;
++                afterYesRetryCount = 0;
++                lastAfterYesRetryMs = now;
+                 transitionTo(STATE_AFTER_YES);
+                 return 700L;
+             }
+@@ -1737,19 +1747,56 @@
+     }
+ 
+     private long handleAfterYes(List<AccessibilityNodeInfo> roots, long now) {
++        // First preference: Mawada exposes an explicit إغلاق control after
++        // accepting the confirmation. Close it and only then return to LOOK.
+         AccessibilityNodeInfo close = findClickableInAll(roots, config.closeText);
+         if (close != null) {
+             if (performClick(close)) {
++                diagEvent("AFTER_YES: popup close clicked; dismissal path confirmed");
+                 setAction(getString(R.string.action_close));
++                afterYesRetryCount = 0;
+                 transitionTo(STATE_LOOK_LIKE);
+                 return 800L;
+             }
+             return config.scanIntervalMs;
+         }
+-        if (now - stateChangedAt > MAX_WAIT_AFTER_YES_MS) {
++
++        // Critical 1.21 invariant: if نعم is STILL visible, the confirmation
++        // layer has not been proven to disappear. Never fall through to LOOK
++        // just because 8 seconds elapsed; that lets background card nodes leak
++        // through Accessibility while the modal intercepts every swipe.
++        AccessibilityNodeInfo yesStillVisible = findClickableInAll(roots, config.yesText);
++        if (yesStillVisible != null) {
++            if (afterYesRetryCount < AFTER_YES_MAX_RETRIES
++                    && now - lastAfterYesRetryMs >= AFTER_YES_RETRY_INTERVAL_MS) {
++                boolean retried = performClick(yesStillVisible);
++                lastAfterYesRetryMs = now;
++                afterYesRetryCount++;
++                diagEvent("AFTER_YES: confirmation still visible; retry="
++                        + afterYesRetryCount + " clicked=" + retried);
++            }
++            setAction(getString(R.string.action_wait));
++            return 500L;
++        }
++
++        // Positive proof that the list is back is stronger than a timeout.
++        AccessibilityNodeInfo visibleLike = findClickableInAll(roots, config.likeText);
++        if (visibleLike != null) {
++            diagEvent("AFTER_YES: confirmation dismissed; visible like control restored");
++            afterYesRetryCount = 0;
+             transitionTo(STATE_LOOK_LIKE);
+-            return 300L;
++            return 250L;
++        }
++
++        if (now - stateChangedAt > MAX_WAIT_AFTER_YES_MS) {
++            // No confirmation controls and no list controls. Rendering may be
++            // in flight; remain in the safe popup/wait state rather than
++            // blindly entering LOOK and dispatching gestures through a modal.
++            diagEvent("AFTER_YES: no dismissal proof after timeout; staying safe");
++            stateChangedAt = now; // rate-limit the timeout diagnostic
++            return 700L;
+         }
++
+         setAction(getString(R.string.action_wait));
+         return config.scanIntervalMs;
+     }
+@@ -2216,19 +2263,52 @@
+ 
+     private long recoverFromViewportStall(
+             List<AccessibilityNodeInfo> roots, long now, String reason) {
+-        String summary;
+-        try { summary = buildScreenSummary(roots); }
+-        catch (Throwable t) { summary = "(stall summary failed)"; }
++        // If a confirmation layer leaked past AFTER_YES, recover the state
++        // machine before sending another swipe into the modal.
++        AccessibilityNodeInfo popupClose = findClickableInAll(roots, config.closeText);
++        if (popupClose != null) {
++            boolean clicked = performClick(popupClose);
++            diagEvent("STALL-POPUP: visible close recovered clicked=" + clicked);
++            pendingScrollSignature = null;
++            afterYesRetryCount = 0;
++            transitionTo(STATE_AFTER_YES);
++            return 700L;
++        }
++        AccessibilityNodeInfo popupYes = findClickableInAll(roots, config.yesText);
++        if (popupYes != null) {
++            diagEvent("STALL-POPUP: visible confirmation recovered; returning to AFTER_YES");
++            pendingScrollSignature = null;
++            afterYesRetryCount = 0;
++            lastAfterYesRetryMs = 0L;
++            transitionTo(STATE_AFTER_YES);
++            return 500L;
++        }
+ 
++        // Do not walk/write the full 6K+ node tree on every three failed
++        // gestures. The old recovery path made diagnostics part of the stall.
++        String summary = "snapshot="
++                + (currentProbe == null ? "none" : currentProbe.metrics())
++                + " anchor=" + shortSig(viewportSignature(roots));
+         diagEvent("STALL: " + reason + " | " + summary);
+-        try {
+-            String path = writeAccessibilityDump(
+-                    roots,
+-                    "استرداد تلقائي — توقف تقدّم القائمة",
+-                    summary);
+-            if (path != null && !path.isEmpty()) lastDumpPath = path;
+-        } catch (Throwable t) {
+-            diagEvent("STALL-DUMP failed: " + t.getClass().getSimpleName());
++
++        if (lastAutoStallFullDumpMs == 0L
++                || now - lastAutoStallFullDumpMs >= STALL_FULL_DUMP_INTERVAL_MS) {
++            lastAutoStallFullDumpMs = now;
++            try {
++                String fullSummary;
++                try { fullSummary = buildScreenSummary(roots); }
++                catch (Throwable t) { fullSummary = summary; }
++                String path = writeAccessibilityDump(
++                        roots,
++                        "استرداد تلقائي — توقف تقدّم القائمة",
++                        fullSummary);
++                if (path != null && !path.isEmpty()) lastDumpPath = path;
++                diagEvent("STALL-DUMP: full tree captured (throttled)");
++            } catch (Throwable t) {
++                diagEvent("STALL-DUMP failed: " + t.getClass().getSimpleName());
++            }
++        } else {
++            diagEvent("STALL-DUMP: skipped by 120s throttle");
+         }
+ 
+         pendingScrollSignature = null;
+@@ -2641,7 +2721,11 @@
+      */
+     private AccessibilityNodeInfo findByTextNative(
+             List<AccessibilityNodeInfo> roots, String text, boolean skipProcessed) {
+-        ArrayList<AccessibilityNodeInfo> candidates = new ArrayList<>();
++        // 1.21: stream framework hits instead of first retaining every match.
++        // A late-session Mawada DOM can contain 600+ historical "إهتمام"
++        // labels. The old two-pass code tracked/allotted every hit before it
++        // even tested visibility. Preserve the same iteration order but return
++        // as soon as a usable visible control is found.
+         if (currentProbe != null) currentProbe.nativeQueries++;
+         for (AccessibilityNodeInfo root : roots) {
+             if (root == null) continue;
+@@ -2652,23 +2736,18 @@
+             for (AccessibilityNodeInfo h : hits) {
+                 if (h == null) continue;
+                 track(h);
+-                candidates.add(h);
+                 if (currentProbe != null) currentProbe.nativeCandidates++;
++                try {
++                    if (!h.isVisibleToUser()) continue;
++                } catch (Throwable t) {
++                    continue;
++                }
++                AccessibilityNodeInfo clickable = climbToClickable(h);
++                if (clickable == null) continue;
++                if (skipProcessed && processedBounds.contains(boundsKey(clickable))) continue;
++                return clickable;
+             }
+         }
+-
+-        for (AccessibilityNodeInfo h : candidates) {
+-            if (h == null) continue;
+-            try {
+-                if (!h.isVisibleToUser()) continue;
+-            } catch (Throwable t) {
+-                continue;
+-            }
+-            AccessibilityNodeInfo clickable = climbToClickable(h);
+-            if (clickable == null) continue;
+-            if (skipProcessed && processedBounds.contains(boundsKey(clickable))) continue;
+-            return clickable;
+-        }
+         return null;
+     }
+ 
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 41
+-        versionName '1.20.0-no-auto-refresh'
++        versionCode 42
++        versionName '1.21.0-lean-popup'
+     }
+ 
+     buildTypes {

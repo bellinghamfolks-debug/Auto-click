@@ -1,0 +1,238 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -101,6 +101,9 @@
+     // (rewind vs. continue) so refreshContinueMode keeps working.
+     private static final int STATE_REFRESH_FIND_SEARCH_1 = 8;
+     private static final int STATE_REFRESH_FIND_SEARCH_2 = 9;
++    // Restored from the latest APK: after a refresh, catch up near the
++    // previous list position instead of restarting from the top.
++    private static final int STATE_POST_REFRESH_CATCHUP = 10;
+ 
+     // v10.0: latency budgets — relaxed because Mawada's late-session popup
+     // can take 6-7 s to even appear. The previous 2.5 s timeout was firing
+@@ -161,6 +164,9 @@
+     // Mawada's first paint of the fresh list is ~1.5-2 s on average.
+     private static final long SOFT_REFRESH_WAIT_MS = 2500L;
+     private static final long NAV_ONLINE_WAIT_MS    = 2000L;
++    private static final long CATCHUP_SCROLL_WAIT_MS = 800L;
++    private static final int  MAX_CATCHUP_SCROLLS    = 20;
++    private static final int  SCROLLS_PER_LIKES      = 8;
+ 
+     // v1.11: keywords used by the filter-mode profile inspector.
+     // "الملف الشخصي" appears on the popup we get when we tap a member
+@@ -266,6 +272,9 @@
+     private int    likesAtLastScroll       = 0;
+     private int    rewindStepsDone         = 0;
+     private int    scrollPatternIndex      = 0; // rotates 0,1,2 within a streak
++    private int    catchUpScrollsRemaining = 0;
++    private int    idleRecoveryCount       = 0;
++    private boolean targetScreenArmed      = false;
+     // v10.0: confirmed likes since the most recent soft refresh. When this
+     // reaches LIKES_PER_SOFT_REFRESH we switch into STATE_SOFT_REFRESH to
+     // tap Mawada's own "members" tab and reset its WebView DOM.
+@@ -405,6 +414,9 @@
+         likesAtLastScroll = 0;
+         rewindStepsDone = 0;
+         scrollPatternIndex = 0;
++        catchUpScrollsRemaining = 0;
++        idleRecoveryCount = 0;
++        targetScreenArmed = false;
+         likesSinceRefresh = 0;
+         endOfListConfirmations = 0;
+         firstEndOfListConfirmationMs = 0L;
+@@ -430,7 +442,8 @@
+                 + " yesText='" + cfg.yesText + "'"
+                 + " dedup=" + cfg.dedupEnabled
+                 + " filterMode=" + (cfg.filterDivorcedWidowedOnly ? "DIV_WID_ONLY" : "ALL")
+-                + " refreshMode=" + (cfg.refreshContinueMode ? "CONTINUE" : "RESTART"));
++                + " refreshMode=" + (cfg.refreshContinueMode ? "CONTINUE" : "RESTART")
++                + " findMode=" + cfg.findMembersMode);
+         running.set(true);
+         notifyUpdate(STATUS_RUNNING);
+         handler.removeCallbacksAndMessages(null);
+@@ -473,6 +486,7 @@
+             case STATE_INSPECT_PROFILE: return "INSPECT";
+             case STATE_REFRESH_FIND_SEARCH_1: return "REFRESH_SEARCH_1";
+             case STATE_REFRESH_FIND_SEARCH_2: return "REFRESH_SEARCH_2";
++            case STATE_POST_REFRESH_CATCHUP: return "CATCHUP";
+             default:                    return "?(" + s + ")";
+         }
+     }
+@@ -557,17 +571,38 @@
+             return config.scanIntervalMs;
+         }
+ 
++        // A clean install has no saved app/package context. Do not fire any
++        // scroll or BACK gestures until the target screen is actually visible.
++        // This prevents Start from acting on Mokafeefah, the launcher, or the
++        // notification shade while the user is switching to the target app.
++        if (!targetScreenArmed) {
++            if (!looksLikeTargetScreen(roots)) {
++                lastButtonFoundMs = now; // waiting to arm is not an idle failure
++                setAction(getString(R.string.action_wait));
++                return 500L;
++            }
++            targetScreenArmed = true;
++            lastButtonFoundMs = now;
++            diagEvent("TARGET_ARMED: expected target controls detected");
++        }
++
+         diagMaybeSnapshot(now, roots);
+ 
+         // v9: idle-timeout check is now after roots are collected so the
+         // diagnostic dump has data to record. If we're idle, the dump tells
+         // us exactly what's on screen at the moment of failure.
+         if (now - lastButtonFoundMs > config.idleTimeoutMs) {
+-            diagEvent("AUTO-STOP: idle timeout fired (no buttons for "
+-                    + (now - lastButtonFoundMs) + "ms, limit=" + config.idleTimeoutMs + ")");
+-            autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+-                    getString(R.string.stop_reason_idle), roots);
+-            return config.scanIntervalMs;
++            idleRecoveryCount++;
++            diagEvent("RECOVERY: idle timeout attempt=" + idleRecoveryCount
++                    + " idleMs=" + (now - lastButtonFoundMs));
++            lastButtonFoundMs = now;
++            firstNoProgressScrollMs = 0L;
++            processedBounds.clear();
++            // Re-arm after repeated stalls so we cannot keep swiping the wrong
++            // screen if the user changed apps while the session was running.
++            if (idleRecoveryCount % 3 == 0) targetScreenArmed = false;
++            transitionTo(idleRecoveryCount % 3 == 0 ? STATE_SOFT_REFRESH : STATE_MUST_SCROLL);
++            return 350L;
+         }
+ 
+         // v8: detect Mawadda's "no more members" message before doing anything
+@@ -595,10 +630,13 @@
+                 diagEvent("EOL visible confirmation " + endOfListConfirmations
+                         + "/" + EOL_CONFIRMATIONS_REQUIRED);
+                 if (endOfListConfirmations >= EOL_CONFIRMATIONS_REQUIRED) {
+-                    diagEvent("AUTO-STOP: end-of-list confirmed visible 3 times");
+-                    autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+-                            getString(R.string.stop_reason_end_of_list), roots);
+-                    return config.scanIntervalMs;
++                    diagEvent("RECOVERY: end-of-list confirmed; refreshing instead of stopping");
++                    endOfListConfirmations = 0;
++                    firstEndOfListConfirmationMs = 0L;
++                    firstNoProgressScrollMs = 0L;
++                    processedBounds.clear();
++                    transitionTo(STATE_SOFT_REFRESH);
++                    return 350L;
+                 }
+             } else if (endOfListConfirmations != 0) {
+                 diagEvent("EOL candidate cleared; previous confirmation was stale/hidden");
+@@ -647,6 +685,7 @@
+             case STATE_INSPECT_PROFILE: return handleInspectProfile(roots, now);
+             case STATE_REFRESH_FIND_SEARCH_1: return handleRefreshFindSearch(roots, now, 1);
+             case STATE_REFRESH_FIND_SEARCH_2: return handleRefreshFindSearch(roots, now, 2);
++            case STATE_POST_REFRESH_CATCHUP: return handlePostRefreshCatchup(roots, now);
+             default:
+                 transitionTo(STATE_LOOK_LIKE);
+                 return config.scanIntervalMs;
+@@ -754,6 +793,7 @@
+             if (performClick(likeBtn)) {
+                 processedBounds.add(key);
+                 likesCount.incrementAndGet();
++            idleRecoveryCount = 0;
+                 likesSinceRefresh++;
+                 if (fp != null && db != null) db.markLiked(fp);
+                 if (looseId != null) sessionMemberIds.add(looseId);
+@@ -915,6 +955,7 @@
+             setAction(getString(R.string.action_yes));
+             // The like is committed at this point — record it.
+             likesCount.incrementAndGet();
++            idleRecoveryCount = 0;
+             likesSinceRefresh++;
+             if (pendingProfileFp != null && db != null) db.markLiked(pendingProfileFp);
+             inspectStage = 2;
+@@ -1186,19 +1227,41 @@
+     private long finishNavOnlineNow(long now) {
+         processedBounds.clear();
+         if (config.refreshContinueMode) {
+-            // Resume in place. Dedup (if on) handles skipping already-liked
+-            // members as the bot scans down again.
++            int catchup = Math.min(MAX_CATCHUP_SCROLLS,
++                    Math.max(0, likesCount.get() / SCROLLS_PER_LIKES));
++            if (catchup > 0) {
++                catchUpScrollsRemaining = catchup;
++                diagEvent("NAV_ONLINE: catch-up of " + catchup
++                        + " scrolls (likes=" + likesCount.get() + ")");
++                transitionTo(STATE_POST_REFRESH_CATCHUP);
++                return 600L;
++            }
+             diagEvent("NAV_ONLINE: refreshContinueMode=ON, resuming LOOK_LIKE");
+             transitionTo(STATE_LOOK_LIKE);
+             return 600L;
+         }
+-        // Restart from top: rewind back to row #1 of the fresh list.
+         diagEvent("NAV_ONLINE: refreshContinueMode=OFF, rewinding to top");
+         rewindStepsDone = 0;
+         transitionTo(STATE_REWIND_TO_TOP);
+         return 600L;
+     }
+ 
++    private long handlePostRefreshCatchup(List<AccessibilityNodeInfo> roots, long now) {
++        if (catchUpScrollsRemaining <= 0) {
++            diagEvent("CATCHUP: done, resuming LOOK");
++            transitionTo(STATE_LOOK_LIKE);
++            return 300L;
++        }
++        boolean scrolled = performSmartScroll(roots, scrollPatternIndex);
++        scrollPatternIndex = (scrollPatternIndex + 1) % 3;
++        catchUpScrollsRemaining--;
++        diagEvent("CATCHUP: scrolled remaining=" + catchUpScrollsRemaining
++                + " result=" + scrolled);
++        setAction(getString(R.string.action_scroll));
++        lastButtonFoundMs = now;
++        return CATCHUP_SCROLL_WAIT_MS;
++    }
++
+     /**
+      * v1.12 — three-dots refresh entry. Looks up the saved 'ثلاث نقاط'
+      * coordinate and dispatches a gesture tap. The menu button has empty
+@@ -1379,10 +1442,11 @@
+             // clear reason.
+             if (firstNoProgressScrollMs == 0L) firstNoProgressScrollMs = now;
+             if (now - firstNoProgressScrollMs > NO_PROGRESS_BUDGET_MS) {
+-                diagEvent("AUTO-STOP: 3-min no-progress budget exhausted");
+-                autoStopWithDiagnostic(STATUS_AUTO_STOPPED,
+-                        getString(R.string.stop_reason_no_progress), roots);
+-                return config.scanIntervalMs;
++                diagEvent("RECOVERY: 3-min no-progress budget exhausted; forcing refresh");
++                firstNoProgressScrollMs = 0L;
++                processedBounds.clear();
++                transitionTo(STATE_SOFT_REFRESH);
++                return 350L;
+             }
+         }
+         likesAtLastScroll = curLikes;
+@@ -1568,6 +1632,30 @@
+         }
+         return false;
+     }
++
++    // ============================================================
++    //                     TARGET-SCREEN ARMING
++    // ============================================================
++
++    private boolean looksLikeTargetScreen(List<AccessibilityNodeInfo> roots) {
++        keywordScanThisTick = 0;
++        List<String> needles = new ArrayList<>();
++        String like = normalizeArabic(config.likeText);
++        if (!like.isEmpty()) needles.add(like);
++        needles.add(normalizeArabic("الأعضاء"));
++        needles.add(normalizeArabic("المتواجدون الآن"));
++        needles.add(normalizeArabic("المتواجدون الان"));
++        if (config.profileKeywords != null) {
++            for (String k : config.profileKeywords) {
++                String n = normalizeArabic(k);
++                if (!n.isEmpty()) needles.add(n);
++            }
++        }
++        for (AccessibilityNodeInfo root : roots) {
++            if (containsAnyVisibleText(root, needles, 0)) return true;
++        }
++        return false;
++    }
+ 
+     // ============================================================
+     //                        NODE LOOKUPS

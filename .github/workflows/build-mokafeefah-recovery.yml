@@ -1,9 +1,9 @@
-name: Build Mokafeefah Engine 1.19
+name: Build Mokafeefah Engine 1.20
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v119-gesture-only-scroll
+      - agent/mokafeefah-v120-no-auto-refresh
   pull_request:
   workflow_dispatch:
 
@@ -72,8 +72,14 @@ jobs:
         run: |
           cd src/mokafeefah
           patch -p4 --fuzz=0 < ../../recovery-overrides/v119-gesture-only-scroll.patch
+
+      - name: Apply 1.20 no-auto-refresh stability
+        run: |
+          cd src/mokafeefah
+          patch -p1 --fuzz=0 < ../../recovery-overrides/v120-no-auto-refresh.patch
           grep -n "versionCode\|versionName" app/build.gradle
-          grep -n "SCROLL-GESTURE-ONLY\|never tap a generic\|gesture-only forward" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
+          grep -n "REFRESH-BLOCKED\|NO_LIKE_RECOVERY-GESTURE\|AUTO-NAV disabled\|SCROLL-GESTURE-ONLY" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -160
+          if grep -q "triggering soft refresh after" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -93,7 +99,7 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.19.0-gesture-only-scroll-apks
+          name: mokafeefah-v1.20.0-no-auto-refresh-apks
           path: |
             src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
             src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk

@@ -1,0 +1,203 @@
+diff -ruN /mnt/data/v117_work/app/build.gradle /mnt/data/v118_work/app/build.gradle
+--- /mnt/data/v117_work/app/build.gradle	2026-08-19 12:14:03.604986045 +0000
++++ /mnt/data/v118_work/app/build.gradle	2026-08-19 12:31:46.799475290 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 38
+-        versionName '1.17.0-verified-scroll'
++        versionCode 39
++        versionName '1.18.0-content-gesture'
+     }
+ 
+     buildTypes {
+diff -ruN /mnt/data/v117_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java /mnt/data/v118_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+--- /mnt/data/v117_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 12:14:03.605170910 +0000
++++ /mnt/data/v118_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 12:31:46.799873382 +0000
+@@ -465,6 +465,63 @@
+             return Integer.toHexString(out.toString().hashCode()) + ":" + parts.size();
+         }
+ 
++        Rect scrollGestureBounds() {
++            int minTop = screenH, maxBottom = 0;
++            int minLeft = screenW, maxRight = 0;
++            int matches = 0;
++            String like = normalizeArabic(config == null ? "" : config.likeText).trim();
++            IdentityHashMap<AccessibilityNodeInfo, Boolean> seen = new IdentityHashMap<>();
++            if (!like.isEmpty()) {
++                for (SnapshotItem item : labels) {
++                    if (!item.label.contains(like)) continue;
++                    AccessibilityNodeInfo clickable = climbToClickable(item.node);
++                    if (clickable == null || seen.put(clickable, Boolean.TRUE) != null) continue;
++                    Rect r = new Rect();
++                    try { clickable.getBoundsInScreen(r); } catch (Throwable ignore) {}
++                    if (r.width() <= 0 || r.height() <= 0 || r.bottom <= 0 || r.top >= screenH) continue;
++                    minTop = Math.min(minTop, Math.max(0, r.top));
++                    maxBottom = Math.max(maxBottom, Math.min(screenH, r.bottom));
++                    minLeft = Math.min(minLeft, Math.max(0, r.left));
++                    maxRight = Math.max(maxRight, Math.min(screenW, r.right));
++                    matches++;
++                }
++            }
++
++            Rect out = new Rect();
++            if (matches > 0) {
++                int padY = Math.max(48, (int) (screenH * 0.07f));
++                int top = Math.max((int) (screenH * 0.16f), minTop - padY);
++                int bottom = Math.min((int) (screenH * 0.84f), maxBottom + padY);
++                if (bottom - top < (int) (screenH * 0.38f)) {
++                    int mid = (top + bottom) / 2;
++                    int half = (int) (screenH * 0.22f);
++                    top = Math.max((int) (screenH * 0.16f), mid - half);
++                    bottom = Math.min((int) (screenH * 0.84f), mid + half);
++                }
++                int left = Math.max((int) (screenW * 0.12f), minLeft);
++                int right = Math.min((int) (screenW * 0.88f), Math.max(maxRight, left + (int) (screenW * 0.30f)));
++                if (right <= left) { left = (int) (screenW * 0.20f); right = (int) (screenW * 0.80f); }
++                out.set(left, top, right, bottom);
++                return out;
++            }
++
++            if (scrollableCache != null) {
++                Rect r = new Rect();
++                try { scrollableCache.getBoundsInScreen(r); } catch (Throwable ignore) {}
++                if (r.width() > 0 && r.height() > 0) {
++                    r.left = Math.max(r.left, (int) (screenW * 0.10f));
++                    r.right = Math.min(r.right, (int) (screenW * 0.90f));
++                    r.top = Math.max(r.top, (int) (screenH * 0.16f));
++                    r.bottom = Math.min(r.bottom, (int) (screenH * 0.84f));
++                    if (r.width() > 0 && r.height() > (int) (screenH * 0.25f)) return r;
++                }
++            }
++
++            out.set((int) (screenW * 0.18f), (int) (screenH * 0.20f),
++                    (int) (screenW * 0.82f), (int) (screenH * 0.80f));
++            return out;
++        }
++
+         String metrics() {
+             return "visits=" + visits + " visible=" + visibleNodes
+                     + " labels=" + labels.size() + " truncated=" + truncated;
+@@ -561,6 +618,8 @@
+     private int    unchangedViewportScrolls = 0;
+     private static final int UNCHANGED_VIEWPORT_LIMIT = 3;
+     private volatile long lastViewScrolledEventMs = 0L;
++    private volatile long lastGestureCompletedMs = 0L;
++    private volatile long lastGestureCancelledMs = 0L;
+ 
+     // A dispatched gesture only means Android accepted the gesture, not that
+     // the list actually advanced. Count no-like scroll cycles and recover
+@@ -2202,44 +2261,66 @@
+      * recognises as "user wants more".
+      */
+     private boolean performSmartScroll(List<AccessibilityNodeInfo> roots, int patternIndex) {
++        // Primary path: a real finger gesture inside the detected member-list
++        // band. WebViews may return true from ACTION_SCROLL_* without moving
++        // their inner document, so semantic actions are only a fallback after
++        // repeated VERIFIED unchanged gestures.
++        if (unchangedViewportScrolls < 2) {
++            boolean gestured = performGestureSwipeUp(patternIndex);
++            if (gestured) return true;
++        }
++
+         AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
+         if (scrollable != null) {
+             try {
+-                if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+-                    diagEvent("SCROLL-ACTION: ACTION_SCROLL_FORWARD accepted");
++                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
++                        && scrollable.performAction(
++                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.getId())) {
++                    diagEvent("SCROLL-FALLBACK: ACTION_SCROLL_DOWN accepted after verified gesture stall");
+                     return true;
+                 }
+             } catch (Throwable ignore) {}
+             try {
+-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+-                        && scrollable.performAction(
+-                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.getId())) {
+-                    diagEvent("SCROLL-ACTION: ACTION_SCROLL_DOWN accepted");
++                if (scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
++                    diagEvent("SCROLL-FALLBACK: ACTION_SCROLL_FORWARD accepted after verified gesture stall");
+                     return true;
+                 }
+             } catch (Throwable ignore) {}
+         }
+ 
+-        // Only fall back to a finger gesture when the semantic scroll actions
+-        // were unavailable/rejected. Never stack an accessibility scroll and
+-        // a gesture in the same tick.
++        // If the accessibility action was unavailable/rejected, keep using a
++        // finger gesture, rotating shape/velocity on each retry.
+         return performGestureSwipeUp(patternIndex);
+     }
+ 
+     private boolean performGestureSwipeUp(int patternIndex) {
+         try {
+-            int centerX = screenW / 2;
+-            float startFrac, endFrac;
++            Rect band = currentProbe != null
++                    ? currentProbe.scrollGestureBounds()
++                    : new Rect((int) (screenW * 0.18f), (int) (screenH * 0.20f),
++                               (int) (screenW * 0.82f), (int) (screenH * 0.80f));
++            int width = Math.max(1, band.width());
++            int height = Math.max(1, band.height());
++            int centerX = band.left + width / 2;
++            centerX = Math.max((int) (screenW * 0.20f), Math.min((int) (screenW * 0.80f), centerX));
++
++            float startInBand, endInBand;
+             long duration;
+             switch (patternIndex % 3) {
+-                case 0: startFrac = 0.82f; endFrac = 0.18f; duration = 450L; break; // standard
+-                case 1: startFrac = 0.88f; endFrac = 0.12f; duration = 750L; break; // long slow drag
+-                default: startFrac = 0.92f; endFrac = 0.08f; duration = 320L; break;// fast fling
+-            }
+-            int jitter = (int) ((System.currentTimeMillis() % 7) - 3) * 10;
+-            int startY = (int) (screenH * startFrac);
+-            int endY   = (int) (screenH * endFrac) + jitter;
+-            if (endY < (int) (screenH * 0.06f)) endY = (int) (screenH * 0.06f);
++                case 0: startInBand = 0.82f; endInBand = 0.22f; duration = 520L; break;
++                case 1: startInBand = 0.88f; endInBand = 0.30f; duration = 700L; break;
++                default: startInBand = 0.76f; endInBand = 0.16f; duration = 380L; break;
++            }
++            int startY = band.top + (int) (height * startInBand);
++            int endY = band.top + (int) (height * endInBand);
++            int minTravel = Math.max(220, (int) (screenH * 0.28f));
++            if (startY - endY < minTravel) {
++                endY = Math.max(band.top + 24, startY - minTravel);
++            }
++            startY = Math.min(startY, (int) (screenH * 0.84f));
++            endY = Math.max(endY, (int) (screenH * 0.16f));
++            if (startY <= endY + 80) return false;
++
+             Path path = new Path();
+             path.moveTo(centerX, startY);
+             path.lineTo(centerX, endY);
+@@ -2247,8 +2328,25 @@
+                     new GestureDescription.StrokeDescription(path, 0L, duration);
+             GestureDescription gesture =
+                     new GestureDescription.Builder().addStroke(stroke).build();
+-            return dispatchGesture(gesture, null, null);
++
++            diagEvent("SCROLL-GESTURE: dispatch x=" + centerX
++                    + " y=" + startY + "->" + endY
++                    + " band=" + band.left + "," + band.top + "," + band.right + "," + band.bottom
++                    + " pattern=" + patternIndex);
++
++            Handler callbackHandler = engineHandler != null ? engineHandler : mainHandler;
++            return dispatchGesture(gesture, new GestureResultCallback() {
++                @Override public void onCompleted(GestureDescription gestureDescription) {
++                    lastGestureCompletedMs = System.currentTimeMillis();
++                    diagEvent("SCROLL-GESTURE: completed");
++                }
++                @Override public void onCancelled(GestureDescription gestureDescription) {
++                    lastGestureCancelledMs = System.currentTimeMillis();
++                    diagEvent("SCROLL-GESTURE: cancelled");
++                }
++            }, callbackHandler);
+         } catch (Throwable t) {
++            diagEvent("SCROLL-GESTURE: exception=" + t.getClass().getSimpleName());
+             return false;
+         }
+     }

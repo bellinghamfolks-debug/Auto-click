@@ -1,0 +1,188 @@
+--- v119_work/app/build.gradle	2026-08-19 12:50:42.341340165 +0000
++++ v120_work/app/build.gradle	2026-08-19 13:31:19.554506434 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 40
+-        versionName '1.19.0-gesture-only-scroll'
++        versionCode 41
++        versionName '1.20.0-no-auto-refresh'
+     }
+ 
+     buildTypes {
+--- v119_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 12:50:56.192140896 +0000
++++ v120_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 13:32:00.129813507 +0000
+@@ -164,7 +164,7 @@
+     // Pre-existing latency considerations: even at 200 likes the WebView
+     // tree only roughly doubles from its baseline (~1.3 K → ~2.5 K nodes),
+     // which the v9.4 hot-path fixes already absorb without throughput loss.
+-    private static final int  LIKES_PER_SOFT_REFRESH = 200;
++    private static final int  LIKES_PER_SOFT_REFRESH = Integer.MAX_VALUE; // v1.20 legacy only; auto refresh disabled
+     // Visible text / desc of Mawada's bottom-bar entry that returns the
+     // user to the members search page. Confirmed in the v9.4 dump:
+     //   [C] [V] [412,2387][806,2712] android.view.View desc="الأعضاء"
+@@ -593,6 +593,7 @@
+     private boolean targetScreenArmed      = false;
+     private int    consecutiveNoLikeControlTicks = 0;
+     private long   noLikeControlsSinceMs = 0L;
++    private long   lastNoLikeRecoveryGestureMs = 0L;
+ 
+     // v1.13.1: once the real target screen is seen, pin the session to the
+     // package that owns the ACTIVE window. The old implementation searched
+@@ -627,7 +628,7 @@
+     private int consecutiveNoProgressScrolls = 0;
+     private static final int NO_PROGRESS_SCROLL_LIMIT = 5;
+     // v10.0: confirmed likes since the most recent soft refresh. When this
+-    // reaches LIKES_PER_SOFT_REFRESH we switch into STATE_SOFT_REFRESH to
++    // legacy counter retained for diagnostics; v1.20 never switches to STATE_SOFT_REFRESH by count
+     // tap Mawada's own "members" tab and reset its WebView DOM.
+     private int    likesSinceRefresh        = 0;
+ 
+@@ -818,6 +819,7 @@
+         targetScreenArmed = false;
+         consecutiveNoLikeControlTicks = 0;
+         noLikeControlsSinceMs = 0L;
++        lastNoLikeRecoveryGestureMs = 0L;
+         sessionTargetPackage = "";
+         offTargetSinceMs = 0L;
+         pendingLikeFp = null;
+@@ -1111,11 +1113,11 @@
+                     + " idleMs=" + (now - lastButtonFoundMs));
+             lastButtonFoundMs = now;
+             firstNoProgressScrollMs = 0L;
+-            processedBounds.clear();
+-            // Re-arm after repeated stalls so we cannot keep swiping the wrong
+-            // screen if the user changed apps while the session was running.
+-            if (idleRecoveryCount % 3 == 0) targetScreenArmed = false;
+-            transitionTo(idleRecoveryCount % 3 == 0 ? STATE_SOFT_REFRESH : STATE_MUST_SCROLL);
++            // v1.20: keep the current viewport transaction state. Clearing
++            // processedBounds before verified movement can replay the same
++            // members. Recovery stays on the current results screen and only
++            // retries a real gesture.
++            transitionTo(STATE_MUST_SCROLL);
+             return 350L;
+         }
+ 
+@@ -1146,13 +1148,12 @@
+                 diagEvent("EOL visible confirmation " + endOfListConfirmations
+                         + "/" + EOL_CONFIRMATIONS_REQUIRED);
+                 if (endOfListConfirmations >= EOL_CONFIRMATIONS_REQUIRED) {
+-                    diagEvent("RECOVERY: end-of-list confirmed; refreshing instead of stopping");
++                    diagEvent("RECOVERY: end-of-list hint confirmed; keeping session on results and retrying gesture");
+                     endOfListConfirmations = 0;
+                     firstEndOfListConfirmationMs = 0L;
+                     firstNoProgressScrollMs = 0L;
+-                    processedBounds.clear();
+-                    transitionTo(STATE_SOFT_REFRESH);
+-                    return 350L;
++                    transitionTo(STATE_MUST_SCROLL);
++                    return 700L;
+                 }
+             } else if (endOfListConfirmations != 0) {
+                 diagEvent("EOL candidate cleared; previous confirmation was stale/hidden");
+@@ -1196,7 +1197,13 @@
+             case STATE_AFTER_LIKE:      return handleAfterLike(roots, now);
+             case STATE_AFTER_YES:       return handleAfterYes(roots, now);
+             case STATE_MUST_SCROLL:     return handleMustScroll(roots, now);
+-            case STATE_SOFT_REFRESH:    return handleSoftRefresh(roots, now);
++            case STATE_SOFT_REFRESH:
++                // v1.20 hard safety gate: automatic navigation/refresh is
++                // disabled during a running session. If a stale state reaches
++                // here, return to LOOK without tapping menus or tabs.
++                diagEvent("REFRESH-BLOCKED: auto refresh disabled in v1.20; returning to LOOK");
++                transitionTo(STATE_LOOK_LIKE);
++                return 350L;
+             case STATE_NAV_ONLINE_NOW:  return handleNavOnlineNow(roots, now);
+             case STATE_INSPECT_PROFILE: return handleInspectProfile(roots, now);
+             case STATE_REFRESH_FIND_SEARCH_1: return handleRefreshFindSearch(roots, now, 1);
+@@ -1213,19 +1220,11 @@
+     // ============================================================
+ 
+     private long handleLookLike(List<AccessibilityNodeInfo> roots, long now) {
+-        // v10.0: periodic soft refresh of Mawada's search page. Triggered
+-        // here (top of LOOK_LIKE, when we're about to scan for a new like
+-        // button) so it never fires mid-popup. After ~80 likes Mawada's
+-        // WebView DOM has bloated to 2-3x its initial size and per-cycle
+-        // latency starts climbing — tapping the members tab forces a
+-        // re-render, the tree drops back to ~1.3 K nodes, and the next
+-        // 80 likes run at early-session speed.
+-        if (likesSinceRefresh >= LIKES_PER_SOFT_REFRESH) {
+-            diagEvent("LOOK: triggering soft refresh after "
+-                    + likesSinceRefresh + " likes since last refresh");
+-            transitionTo(STATE_SOFT_REFRESH);
+-            return 100L;
+-        }
++        // v1.20: Never navigate away from a healthy results screen merely
++        // because a like counter reached a threshold. The old 200-like soft
++        // refresh opened Mawada's three-dots menu and could strand the engine
++        // outside the results list. Long-session cache hygiene is handled
++        // independently; count-based navigation is intentionally disabled.
+         AccessibilityNodeInfo yes = findClickableInAll(roots, config.yesText);
+         if (yes != null && performClick(yes)) {
+             if (pendingLikeStartedMs != 0L) commitPendingLike(now, "LOOK stray confirmation");
+@@ -1350,16 +1349,35 @@
+                 return 450L;
+             }
+ 
+-            // Hard acceptance rule: never scroll an unproven screen. Capture
+-            // the failure while Mawada is still active, then re-enter through
+-            // the configured navigation/refresh route.
+-            captureFailureDump(roots, "لم يتم العثور على زر إهتمام في لقطة الشاشة المرئية");
+-            diagEvent("NO_LIKE_CONTROLS: threshold reached; refresh/navigation instead of blind scroll");
+-            consecutiveNoLikeControlTicks = 0;
+-            noLikeControlsSinceMs = 0L;
+-            processedBounds.clear();
+-            transitionTo(STATE_SOFT_REFRESH);
+-            return 350L;
++            // v1.20: Never leave the results screen automatically because
++            // a transient WebView frame exposes zero like controls. Capture
++            // one diagnostic at the threshold, then keep waiting in place.
++            // If controls return, the normal path resets these counters.
++            if (consecutiveNoLikeControlTicks == NO_LIKE_CONTROL_LIMIT) {
++                captureFailureDump(roots, "لم يتم العثور على زر إهتمام في لقطة الشاشة المرئية");
++                diagEvent("NO_LIKE_CONTROLS: threshold reached; AUTO-NAV disabled, staying on current screen");
++            }
++
++            // If Mawada has temporarily exposed a frame with no like controls
++            // (lazy-load/end-of-viewport), recover without leaving the page.
++            // A real finger gesture is allowed only after an extended grace
++            // period and is still verified by viewportSignature next tick.
++            long noLikeAge = now - noLikeControlsSinceMs;
++            if (noLikeAge >= 8000L && now - lastNoLikeRecoveryGestureMs >= 5000L) {
++                String before = viewportSignature(roots);
++                if (!before.isEmpty()) {
++                    pendingScrollSignature = before;
++                    boolean dispatched = performGestureSwipeUp(scrollPatternIndex);
++                    diagEvent("NO_LIKE_RECOVERY-GESTURE: dispatched=" + dispatched
++                            + " pattern=" + scrollPatternIndex
++                            + " anchor=" + shortSig(before)
++                            + " ageMs=" + noLikeAge);
++                    if (dispatched) scrollPatternIndex = (scrollPatternIndex + 1) % 3;
++                    lastNoLikeRecoveryGestureMs = now;
++                    return POST_SCROLL_WAIT_MS;
++                }
++            }
++            return 1000L;
+         }
+ 
+         // Visible like controls exist, but all of them are already processed
+@@ -2217,12 +2235,13 @@
+         unchangedViewportScrolls = 0;
+         consecutiveNoProgressScrolls = 0;
+         firstNoProgressScrollMs = 0L;
+-        processedBounds.clear();
+-        scrollPatternIndex = 0;
++        // Keep processedBounds: the viewport has NOT been proven to move.
++        // Rotate the finger path and retry without opening menus/navigation.
++        scrollPatternIndex = (scrollPatternIndex + 1) % 3;
+         lastButtonFoundMs = now;
+-        diagEvent("RECOVERY: verified viewport stall; entering safe refresh");
+-        transitionTo(STATE_SOFT_REFRESH);
+-        return 350L;
++        diagEvent("RECOVERY: verified viewport stall; AUTO-NAV disabled, retrying gesture pattern=" + scrollPatternIndex);
++        transitionTo(STATE_MUST_SCROLL);
++        return 700L;
+     }
+ 
+     /**

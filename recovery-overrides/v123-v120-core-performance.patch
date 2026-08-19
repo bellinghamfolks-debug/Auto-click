@@ -1,0 +1,246 @@
+diff -ruN /mnt/data/v120_base/app/build.gradle /mnt/data/v123_work/app/build.gradle
+--- /mnt/data/v120_base/app/build.gradle	2026-08-19 13:32:00.000000000 +0000
++++ /mnt/data/v123_work/app/build.gradle	2026-08-19 16:48:35.000000000 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 41
+-        versionName '1.20.0-no-auto-refresh'
++        versionCode 44
++        versionName '1.23.0-v120-core-performance'
+     }
+ 
+     buildTypes {
+diff -ruN /mnt/data/v120_base/app/src/main/java/com/mokafeefah/clicker/ClickerService.java /mnt/data/v123_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+--- /mnt/data/v120_base/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 13:32:00.000000000 +0000
++++ /mnt/data/v123_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 16:48:35.000000000 +0000
+@@ -125,6 +125,8 @@
+     // longer racing Mawada's worst-case render.
+     private static final long MAX_WAIT_AFTER_LIKE_MS = 8000L;
+     private static final long MAX_WAIT_AFTER_YES_MS  = 8000L;
++    // v1.23: diagnostics must never become part of a long-session stall.
++    private static final long STALL_FULL_DUMP_INTERVAL_MS = 120_000L;
+     private static final long POST_BACK_WAIT_MS      = 900L;
+     private static final long POST_SCROLL_WAIT_MS    = 1800L;
+ 
+@@ -295,9 +297,13 @@
+         int nativeCandidates = 0;
+         int dfsFallbacks = 0; // kept for telemetry compatibility; should stay 0
+         boolean truncated = false;
++        long buildMs = 0L;
++        final boolean leanTraversal;
+         AccessibilityNodeInfo scrollableCache = null;
+ 
+-        VisibleScreenSnapshot(List<AccessibilityNodeInfo> roots) {
++        VisibleScreenSnapshot(List<AccessibilityNodeInfo> roots, boolean leanTraversal) {
++            long buildStarted = SystemClock.uptimeMillis();
++            this.leanTraversal = leanTraversal;
+             this.roots = roots == null ? Collections.emptyList() : roots;
+             for (AccessibilityNodeInfo root : this.roots) {
+                 if (root == null || truncated) continue;
+@@ -309,9 +315,78 @@
+                     return y != 0 ? y : Integer.compare(a.left, b.left);
+                 }
+             });
++            buildMs = Math.max(0L, SystemClock.uptimeMillis() - buildStarted);
+         }
+ 
+         private void collectVisible(AccessibilityNodeInfo node, int depth) {
++            if (!leanTraversal) {
++                // Exact 1.20 traversal. Confirmation states use this branch so
++                // نعم/إغلاق behavior is byte-for-byte equivalent in decisions.
++                collectVisibleLegacy(node, depth);
++                return;
++            }
++            if (node == null || depth > MAX_TREE_DEPTH || truncated) return;
++
++            // Lean list traversal is used only outside AFTER_LIKE/AFTER_YES.
++            // Reject old off-screen DOM cards before spending visibility/class
++            // IPC or the bounded 1200-node snapshot budget.
++            Rect r = new Rect();
++            try { node.getBoundsInScreen(r); } catch (Throwable ignore) {}
++            boolean intersects = r.width() > 0 && r.height() > 0
++                    && r.right > 0 && r.bottom > 0
++                    && r.left < screenW && r.top < screenH;
++
++            if (depth > 3 && !intersects) {
++                boolean structuralContainer = false;
++                try {
++                    CharSequence c = node.getClassName();
++                    if (c != null) {
++                        String cls = c.toString();
++                        structuralContainer = cls.contains("WebView")
++                                || cls.contains("RecyclerView")
++                                || cls.contains("ScrollView")
++                                || cls.contains("ListView");
++                    }
++                } catch (Throwable ignore) {}
++                if (!structuralContainer) return;
++            }
++
++            visits++;
++            if (visits > SNAPSHOT_MAX_VISITS) { truncated = true; return; }
++
++            boolean visible = false;
++            if (intersects) {
++                try { visible = node.isVisibleToUser(); } catch (Throwable ignore) {}
++            }
++
++            if (visible && intersects) {
++                visibleNodes++;
++                if (scrollableCache == null) {
++                    try {
++                        if (node.isScrollable()) scrollableCache = node;
++                    } catch (Throwable ignore) {}
++                }
++                addLabel(node, node.getText(), r);
++                addLabel(node, node.getContentDescription(), r);
++            }
++
++            if (labels.size() >= SNAPSHOT_MAX_LABELS) {
++                truncated = true;
++                return;
++            }
++
++            int n = 0;
++            try { n = node.getChildCount(); } catch (Throwable ignore) {}
++            for (int i = 0; i < n && !truncated; i++) {
++                AccessibilityNodeInfo child = null;
++                try { child = node.getChild(i); } catch (Throwable ignore) {}
++                if (child == null) continue;
++                track(child);
++                collectVisible(child, depth + 1);
++            }
++        }
++
++        private void collectVisibleLegacy(AccessibilityNodeInfo node, int depth) {
+             if (node == null || depth > MAX_TREE_DEPTH || truncated) return;
+             visits++;
+             if (visits > SNAPSHOT_MAX_VISITS) { truncated = true; return; }
+@@ -334,9 +409,6 @@
+             boolean structuralContainer = cls.contains("WebView")
+                     || cls.contains("RecyclerView")
+                     || cls.contains("ScrollView")
+                     || cls.contains("ListView");
+-
+-            // Past the shallow page wrappers, an off-screen card cannot
+-            // contribute anything to the current viewport. Prune the whole
+-            // subtree here instead of walking its old DOM descendants.
+             if (depth > 3 && !intersects && !structuralContainer) return;
+ 
+             if (visible && intersects) {
+@@ -374,7 +446,7 @@
+                 try { child = node.getChild(i); } catch (Throwable ignore) {}
+                 if (child == null) continue;
+                 track(child);
+-                collectVisible(child, depth + 1);
++                collectVisibleLegacy(child, depth + 1);
+             }
+         }
+ 
+@@ -524,7 +596,8 @@
+ 
+         String metrics() {
+             return "visits=" + visits + " visible=" + visibleNodes
+-                    + " labels=" + labels.size() + " truncated=" + truncated;
++                    + " labels=" + labels.size() + " truncated=" + truncated
++                    + " buildMs=" + buildMs + " lean=" + leanTraversal;
+         }
+     }
+ 
+@@ -572,6 +645,7 @@
+     // WebView cache pressure without turning every node lookup into uncached IPC.
+     private long lastAccessibilityCacheClearMs = 0L;
+     private int accessibilityCacheClearCount = 0;
++    private long lastAutoStallFullDumpMs = 0L;
+     private int consecutiveTickErrors = 0;
+     private int    state = STATE_LOOK_LIKE;
+     private long   stateChangedAt = 0L;
+@@ -996,22 +1070,9 @@
+                 + " cacheClears=" + accessibilityCacheClearCount
+                 + " errors=" + consecutiveTickErrors);
+ 
+-        // v1.16 adaptive cache hygiene. Android 13+ exposes clearCache();
+-        // use it only under measured sustained pressure, not every tick.
+-        // This is deliberately conservative: keep normal cache/prefetch
+-        // benefits while discarding stale WebView nodes if average traversal
+-        // latency climbs above the healthy range.
+-        if (Build.VERSION.SDK_INT >= 33
+-                && avgTickMs >= 700L
+-                && now - lastAccessibilityCacheClearMs >= 30_000L) {
+-            boolean cleared = false;
+-            try { cleared = clearCache(); } catch (Throwable ignore) {}
+-            lastAccessibilityCacheClearMs = now;
+-            if (cleared) accessibilityCacheClearCount++;
+-            diagEvent("CACHE-HYGIENE: avgTickMs=" + avgTickMs
+-                    + " clearCache=" + cleared
+-                    + " count=" + accessibilityCacheClearCount);
+-        }
++        // v1.23: do not clear AccessibilityService's cache during a live
++        // session. The 480-like diagnostic showed repeated cache clears while
++        // the WebView DOM grew, forcing expensive node refetches.
+ 
+         healthTickTotalMs = 0L;
+         healthTickSamples = 0;
+@@ -1091,10 +1152,12 @@
+             }
+         }
+ 
+-        // One cache for the whole tick. Hot-path helpers below reuse native
+-        // framework query results rather than rescanning a growing WebView tree
+-        // independently for profile guards, yes/close, like, end-of-list, etc.
+-        currentProbe = new VisibleScreenSnapshot(roots);
++        // Keep the 1.20 confirmation path untouched: AFTER_LIKE and AFTER_YES
++        // use the exact legacy snapshot traversal. Only list/navigation states
++        // get the lean traversal that prunes old off-screen DOM earlier.
++        boolean preserveV120ConfirmationTraversal =
++                state == STATE_AFTER_LIKE || state == STATE_AFTER_YES;
++        currentProbe = new VisibleScreenSnapshot(roots, !preserveV120ConfirmationTraversal);
+ 
+         // Verify the result of the previous scroll using actual viewport
+         // content. Gesture acceptance is not progress.
+@@ -2216,19 +2279,31 @@
+ 
+     private long recoverFromViewportStall(
+             List<AccessibilityNodeInfo> roots, long now, String reason) {
+-        String summary;
+-        try { summary = buildScreenSummary(roots); }
+-        catch (Throwable t) { summary = "(stall summary failed)"; }
+-
++        // Keep recovery behavior from 1.20, but stop diagnostics from walking
++        // and serializing a 6K+ node tree on every third failed gesture.
++        String summary = "snapshot="
++                + (currentProbe == null ? "none" : currentProbe.metrics())
++                + " anchor=" + shortSig(viewportSignature(roots));
+         diagEvent("STALL: " + reason + " | " + summary);
+-        try {
+-            String path = writeAccessibilityDump(
+-                    roots,
+-                    "استرداد تلقائي — توقف تقدّم القائمة",
+-                    summary);
+-            if (path != null && !path.isEmpty()) lastDumpPath = path;
+-        } catch (Throwable t) {
+-            diagEvent("STALL-DUMP failed: " + t.getClass().getSimpleName());
++
++        if (lastAutoStallFullDumpMs == 0L
++                || now - lastAutoStallFullDumpMs >= STALL_FULL_DUMP_INTERVAL_MS) {
++            lastAutoStallFullDumpMs = now;
++            try {
++                String fullSummary;
++                try { fullSummary = buildScreenSummary(roots); }
++                catch (Throwable t) { fullSummary = summary; }
++                String path = writeAccessibilityDump(
++                        roots,
++                        "استرداد تلقائي — توقف تقدّم القائمة",
++                        fullSummary);
++                if (path != null && !path.isEmpty()) lastDumpPath = path;
++                diagEvent("STALL-DUMP: full tree captured (120s throttle)");
++            } catch (Throwable t) {
++                diagEvent("STALL-DUMP failed: " + t.getClass().getSimpleName());
++            }
++        } else {
++            diagEvent("STALL-DUMP: skipped by 120s throttle");
+         }
+ 
+         pendingScrollSignature = null;

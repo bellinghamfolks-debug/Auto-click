@@ -1,9 +1,9 @@
-name: Build Mokafeefah Engine 1.21
+name: Build Mokafeefah Engine 1.22
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v121-lean-snapshot
+      - agent/mokafeefah-v122-confirmation-state-fix
   pull_request:
   workflow_dispatch:
 
@@ -83,9 +83,16 @@ jobs:
         run: |
           cd src/mokafeefah
           patch -p1 --fuzz=0 < ../../recovery-overrides/v121-lean-popup.patch
-          grep -n "versionCode\|versionName" app/build.gradle
-          grep -n "buildMs=\|AFTER_YES: confirmation still visible\|STALL-POPUP\|STALL-DUMP: skipped by 120s throttle" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -160
           if grep -q "CACHE-HYGIENE: avgTickMs=" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
+
+      - name: Apply 1.22 confirmation state fix
+        run: |
+          cd src/mokafeefah
+          patch -p1 --fuzz=0 < ../../recovery-overrides/v122-confirmation-state-fix.patch
+          grep -n "versionCode\|versionName" app/build.gradle
+          grep -n "MAX_WAIT_AFTER_LIKE_MS = 15000L\|AFTER_YES_NO_POPUP_PROOF_MS\|orphan confirmation\|bounded dismissal proof" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -160
+          if grep -q "LOOK stray confirmation" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
+          if grep -q "no dismissal proof after timeout; staying safe" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -105,7 +112,7 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.21.0-lean-popup-apks
+          name: mokafeefah-v1.22.0-confirmation-state-fix-apks
           path: |
             src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
             src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk

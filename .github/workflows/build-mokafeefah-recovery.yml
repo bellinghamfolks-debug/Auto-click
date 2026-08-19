@@ -82,8 +82,9 @@ jobs:
 
       - name: Apply 1.23 performance only over exact 1.20 core
         run: |
+          base64 -d recovery-overrides/v123-v120-core-performance.patch.gz.b64 | gzip -d > /tmp/v123.patch
           cd src/mokafeefah
-          patch -p4 --fuzz=0 < ../../recovery-overrides/v123-v120-core-performance.patch
+          patch -p4 --fuzz=0 < /tmp/v123.patch
           grep -n "versionCode\|versionName" app/build.gradle
           grep -n "buildMs=\|leanTraversal\|STALL-DUMP: skipped by 120s throttle" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
           if grep -q "CACHE-HYGIENE: avgTickMs=" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi

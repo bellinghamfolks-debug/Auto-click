@@ -1,9 +1,9 @@
-name: Build Mokafeefah Engine 1.20
+name: Build Mokafeefah Engine 1.23 V120 Core
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v120-no-auto-refresh
+      - agent/mokafeefah-v123-v120-core-performance
   pull_request:
   workflow_dispatch:
 
@@ -77,9 +77,36 @@ jobs:
         run: |
           cd src/mokafeefah
           patch -p1 --fuzz=0 < ../../recovery-overrides/v120-no-auto-refresh.patch
-          grep -n "versionCode\|versionName" app/build.gradle
-          grep -n "REFRESH-BLOCKED\|NO_LIKE_RECOVERY-GESTURE\|AUTO-NAV disabled\|SCROLL-GESTURE-ONLY" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -160
+          cp app/src/main/java/com/mokafeefah/clicker/ClickerService.java /tmp/v120-service.java
           if grep -q "triggering soft refresh after" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
+
+      - name: Apply 1.23 performance only over exact 1.20 core
+        run: |
+          cd src/mokafeefah
+          patch -p4 --fuzz=0 < ../../recovery-overrides/v123-v120-core-performance.patch
+          grep -n "versionCode\|versionName" app/build.gradle
+          grep -n "buildMs=\|leanTraversal\|STALL-DUMP: skipped by 120s throttle" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
+          if grep -q "CACHE-HYGIENE: avgTickMs=" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          base = Path('/tmp/v120-service.java').read_text()
+          new = Path('app/src/main/java/com/mokafeefah/clicker/ClickerService.java').read_text()
+          def method(src, name):
+              marker = '    private long ' + name + '('
+              st = src.index(marker)
+              en = src.find('\n    private ', st + len(marker))
+              return src[st:en]
+          for name in ('handleAfterLike', 'handleAfterYes'):
+              a, b = method(base, name), method(new, name)
+              print(name, hashlib.sha256(a.encode()).hexdigest(), hashlib.sha256(b.encode()).hexdigest())
+              if a != b:
+                  raise SystemExit(name + ' changed from 1.20')
+          for literal in ('MAX_WAIT_AFTER_LIKE_MS = 8000L', 'MAX_WAIT_AFTER_YES_MS  = 8000L'):
+              if literal not in new:
+                  raise SystemExit('1.20 confirmation timeout changed: ' + literal)
+          print('CONFIRMATION CORE: exact 1.20 method bodies preserved')
+          PY
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -99,7 +126,7 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.20.0-no-auto-refresh-apks
+          name: mokafeefah-v1.23.0-v120-core-performance-apks
           path: |
             src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
             src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk

@@ -1,0 +1,29 @@
+name: Export Android apksigner tools
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export official Android SDK signing tools
+        run: |
+          set -euxo pipefail
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          echo "Using build-tools: $BT"
+          mkdir -p exported/lib
+          cp "$BT/apksigner" exported/apksigner
+          cp "$BT/lib/apksigner.jar" exported/lib/apksigner.jar
+          cp "$BT/zipalign" exported/zipalign
+          cp "$BT/aapt2" exported/aapt2
+          chmod +x exported/apksigner exported/zipalign exported/aapt2
+          "$BT/apksigner" version
+      - name: Upload signing tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-android-apksigner-tools
+          path: exported
+          if-no-files-found: error

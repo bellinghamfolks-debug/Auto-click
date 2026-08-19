@@ -1,9 +1,9 @@
-name: Build Mokafeefah Engine 1.20
+name: Build Mokafeefah Engine 1.21
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v120-no-auto-refresh
+      - agent/mokafeefah-v121-lean-snapshot
   pull_request:
   workflow_dispatch:
 
@@ -77,9 +77,15 @@ jobs:
         run: |
           cd src/mokafeefah
           patch -p1 --fuzz=0 < ../../recovery-overrides/v120-no-auto-refresh.patch
-          grep -n "versionCode\|versionName" app/build.gradle
-          grep -n "REFRESH-BLOCKED\|NO_LIKE_RECOVERY-GESTURE\|AUTO-NAV disabled\|SCROLL-GESTURE-ONLY" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -160
           if grep -q "triggering soft refresh after" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
+
+      - name: Apply 1.21 lean snapshot and popup verification
+        run: |
+          cd src/mokafeefah
+          patch -p1 --fuzz=0 < ../../recovery-overrides/v121-lean-popup.patch
+          grep -n "versionCode\|versionName" app/build.gradle
+          grep -n "buildMs=\|AFTER_YES: confirmation still visible\|STALL-POPUP\|STALL-DUMP: skipped by 120s throttle" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -160
+          if grep -q "CACHE-HYGIENE: avgTickMs=" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -99,7 +105,7 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.20.0-no-auto-refresh-apks
+          name: mokafeefah-v1.21.0-lean-popup-apks
           path: |
             src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
             src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk

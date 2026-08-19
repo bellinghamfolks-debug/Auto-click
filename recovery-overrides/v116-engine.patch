@@ -1,0 +1,340 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 11:06:42.412988969 +0000
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 11:42:24.961312767 +0000
+@@ -7,6 +7,7 @@
+ import android.graphics.Rect;
+ import android.os.Build;
+ import android.os.Handler;
++import android.os.HandlerThread;
+ import android.os.Looper;
+ import android.os.SystemClock;
+ import android.os.VibrationEffect;
+@@ -227,13 +228,20 @@
+     private static ClickerService instance;
+ 
+     private BotConfig config;
+-    private StatusListener listener;
++    private volatile StatusListener listener;
+     private LikedMembersDb db;
+     // v1.12: lookup for saved (name → x,y). Used by the three-dots
+     // refresh path to find the menu coordinate the user pre-saved.
+     private SavedCoordinatesDb coordsDb;
+ 
+-    private final Handler handler = new Handler(Looper.getMainLooper());
++    // v1.16: keep the accessibility engine off the app/UI main looper.
++    // Long WebView traversals used to monopolize the same main thread that
++    // renders Mokafeefah's controls and status counter, so the UI looked
++    // frozen even while the engine continued working. The engine now owns a
++    // dedicated HandlerThread; UI callbacks are marshalled back to main.
++    private final Handler mainHandler = new Handler(Looper.getMainLooper());
++    private HandlerThread engineThread;
++    private Handler engineHandler;
+     private final AtomicBoolean running = new AtomicBoolean(false);
+     private final AtomicInteger likesCount = new AtomicInteger(0);
+     private final AtomicInteger skippedCount = new AtomicInteger(0);
+@@ -489,6 +497,12 @@
+     private int  healthTickSamples = 0;
+     private long healthTickMaxMs = 0L;
+     private long lastSlowTickLogMs = 0L;
++    // v1.16: on API 33+ Android exposes an explicit accessibility cache
++    // control. We keep the cache enabled for normal traversal efficiency, but
++    // clear it only when measured tick latency stays high. This bounds stale
++    // WebView cache pressure without turning every node lookup into uncached IPC.
++    private long lastAccessibilityCacheClearMs = 0L;
++    private int accessibilityCacheClearCount = 0;
+     private int consecutiveTickErrors = 0;
+     private int    state = STATE_LOOK_LIKE;
+     private long   stateChangedAt = 0L;
+@@ -627,7 +641,8 @@
+                 drainTickPool();
+             }
+             if (running.get()) {
+-                handler.postDelayed(this, Math.max(150L, nextDelay));
++                Handler h = engineHandler;
++                if (h != null) h.postDelayed(this, Math.max(150L, nextDelay));
+             }
+         }
+     };
+@@ -639,10 +654,18 @@
+     public static ClickerService getInstance() { return instance; }
+     public static boolean isServiceRunning()   { return instance != null; }
+ 
++    private synchronized void ensureEngineThread() {
++        if (engineThread != null && engineThread.isAlive() && engineHandler != null) return;
++        engineThread = new HandlerThread("MokafeefahEngine");
++        engineThread.start();
++        engineHandler = new Handler(engineThread.getLooper());
++    }
++
+     @Override
+     public void onServiceConnected() {
+         super.onServiceConnected();
+         instance = this;
++        ensureEngineThread();
+         if (db == null) db = new LikedMembersDb(this);
+         if (coordsDb == null) coordsDb = new SavedCoordinatesDb(this);
+     }
+@@ -651,6 +674,8 @@
+     public boolean onUnbind(Intent intent) {
+         instance = null;
+         running.set(false);
++        Handler h = engineHandler;
++        if (h != null) h.removeCallbacksAndMessages(null);
+         return super.onUnbind(intent);
+     }
+ 
+@@ -658,8 +683,15 @@
+     public void onDestroy() {
+         instance = null;
+         running.set(false);
+-        handler.removeCallbacksAndMessages(null);
++        Handler h = engineHandler;
++        if (h != null) h.removeCallbacksAndMessages(null);
+         drainTickPool();
++        HandlerThread t = engineThread;
++        engineHandler = null;
++        engineThread = null;
++        if (t != null) {
++            try { t.quitSafely(); } catch (Throwable ignore) {}
++        }
+         super.onDestroy();
+     }
+ 
+@@ -725,6 +757,8 @@
+         healthTickSamples = 0;
+         healthTickMaxMs = 0L;
+         lastSlowTickLogMs = 0L;
++        lastAccessibilityCacheClearMs = 0L;
++        accessibilityCacheClearCount = 0;
+         consecutiveTickErrors = 0;
+         sessionMemberIds.clear();
+         long now = System.currentTimeMillis();
+@@ -750,10 +784,14 @@
+                 + " filterMode=" + (cfg.filterDivorcedWidowedOnly ? "DIV_WID_ONLY" : "ALL")
+                 + " refreshMode=" + (cfg.refreshContinueMode ? "CONTINUE" : "RESTART")
+                 + " findMode=" + cfg.findMembersMode);
++        ensureEngineThread();
+         running.set(true);
+         notifyUpdate(STATUS_RUNNING);
+-        handler.removeCallbacksAndMessages(null);
+-        handler.postDelayed(tick, 500L);
++        Handler h = engineHandler;
++        if (h != null) {
++            h.removeCallbacksAndMessages(null);
++            h.postDelayed(tick, 500L);
++        }
+         return true;
+     }
+ 
+@@ -767,7 +805,8 @@
+     private void stopInternal(String status, String reason) {
+         if (!running.get()) return;
+         running.set(false);
+-        handler.removeCallbacksAndMessages(null);
++        Handler h = engineHandler;
++        if (h != null) h.removeCallbacksAndMessages(null);
+         if (reason != null && !reason.isEmpty()) lastAction = reason;
+         clearPendingLike("stop");
+         pendingScrollSignature = null;
+@@ -873,7 +912,27 @@
+                 + " dfsFallbacks=" + lastProbeDfsFallbacks
+                 + " pool=" + tickPool.size()
+                 + " heapKb=" + usedKb + "/" + maxKb
++                + " engineThread=" + Thread.currentThread().getName()
++                + " cacheClears=" + accessibilityCacheClearCount
+                 + " errors=" + consecutiveTickErrors);
++
++        // v1.16 adaptive cache hygiene. Android 13+ exposes clearCache();
++        // use it only under measured sustained pressure, not every tick.
++        // This is deliberately conservative: keep normal cache/prefetch
++        // benefits while discarding stale WebView nodes if average traversal
++        // latency climbs above the healthy range.
++        if (Build.VERSION.SDK_INT >= 33
++                && avgTickMs >= 700L
++                && now - lastAccessibilityCacheClearMs >= 30_000L) {
++            boolean cleared = false;
++            try { cleared = clearCache(); } catch (Throwable ignore) {}
++            lastAccessibilityCacheClearMs = now;
++            if (cleared) accessibilityCacheClearCount++;
++            diagEvent("CACHE-HYGIENE: avgTickMs=" + avgTickMs
++                    + " clearCache=" + cleared
++                    + " count=" + accessibilityCacheClearCount);
++        }
++
+         healthTickTotalMs = 0L;
+         healthTickSamples = 0;
+         healthTickMaxMs = 0L;
+@@ -902,8 +961,10 @@
+         // scroll or BACK gestures until the target screen is actually visible.
+         // This prevents Start from acting on Mokafeefah, the launcher, or the
+         // notification shade while the user is switching to the target app.
++        String activePackage = packageNameOfPrimaryRoot(roots);
++
+         if (!targetScreenArmed) {
+-            String detectedPackage = detectTargetPackage(roots);
++            String detectedPackage = detectTargetPackage(roots, activePackage);
+             if (detectedPackage.isEmpty()) {
+                 lastButtonFoundMs = now; // waiting to arm is not an idle failure
+                 setAction(getString(R.string.action_wait));
+@@ -922,7 +983,6 @@
+         // tap load-more, refresh, or touch System UI. Resume automatically when
+         // the same target package becomes active again.
+         if (!sessionTargetPackage.isEmpty()) {
+-            String activePackage = getActivePackageName();
+             if (!sessionTargetPackage.equals(activePackage)) {
+                 if (offTargetSinceMs == 0L) {
+                     offTargetSinceMs = now;
+@@ -2263,7 +2323,7 @@
+     // ============================================================
+ 
+     private boolean looksLikeTargetScreen(List<AccessibilityNodeInfo> roots) {
+-        return !detectTargetPackage(roots).isEmpty();
++        return !detectTargetPackage(roots, packageNameOfPrimaryRoot(roots)).isEmpty();
+     }
+ 
+     /**
+@@ -2271,10 +2331,9 @@
+      * expected target controls. This prevents a target window behind another
+      * app from arming the service.
+      */
+-    private String detectTargetPackage(List<AccessibilityNodeInfo> roots) {
++    private String detectTargetPackage(List<AccessibilityNodeInfo> roots, String activePackage) {
+         keywordScanThisTick = 0;
+-        String activePackage = getActivePackageName();
+-        if (activePackage.isEmpty() || activePackage.equals(getPackageName())) return "";
++        if (activePackage == null || activePackage.isEmpty() || activePackage.equals(getPackageName())) return "";
+ 
+         List<String> needles = new ArrayList<>();
+         String like = normalizeArabic(config.likeText);
+@@ -2298,6 +2357,18 @@
+         return "";
+     }
+ 
++    private String packageNameOfPrimaryRoot(List<AccessibilityNodeInfo> roots) {
++        if (roots == null || roots.isEmpty()) return "";
++        for (AccessibilityNodeInfo root : roots) {
++            if (root == null) continue;
++            try {
++                CharSequence pkg = root.getPackageName();
++                if (pkg != null) return pkg.toString();
++            } catch (Throwable ignore) {}
++        }
++        return "";
++    }
++
+     private String getActivePackageName() {
+         AccessibilityNodeInfo active = null;
+         try {
+@@ -2935,36 +3006,47 @@
+     //                            HELPERS
+     // ============================================================
+ 
++    /**
++     * v1.16 hot-path root acquisition.
++     *
++     * The engine only acts on the active window, so collecting every
++     * interactive window via getWindows() on every tick was duplicate work and
++     * could pull SystemUI/overlay roots into the same traversal. One fresh
++     * active root is sufficient for LOOK, popup confirmation, scrolling and
++     * package gating. If Android temporarily returns no active root, fall back
++     * to the highest interactive window once.
++     */
+     private List<AccessibilityNodeInfo> collectAllRoots() {
+-        List<AccessibilityNodeInfo> result = new ArrayList<>();
+-        List<AccessibilityWindowInfo> windows = null;
+-        try { windows = getWindows(); } catch (Throwable ignore) {}
+-
+-        if (windows != null && !windows.isEmpty()) {
+-            List<AccessibilityWindowInfo> sorted = new ArrayList<>(windows);
+-            Collections.sort(sorted, new Comparator<AccessibilityWindowInfo>() {
+-                @Override
+-                public int compare(AccessibilityWindowInfo a, AccessibilityWindowInfo b) {
+-                    return Integer.compare(b.getLayer(), a.getLayer());
+-                }
+-            });
+-            for (AccessibilityWindowInfo w : sorted) {
+-                if (w == null) continue;
+-                AccessibilityNodeInfo r = null;
+-                try { r = w.getRoot(); } catch (Throwable ignore) {}
+-                if (r != null) { track(r); result.add(r); }
+-            }
+-        }
++        List<AccessibilityNodeInfo> result = new ArrayList<>(1);
+         AccessibilityNodeInfo active = null;
+         try { active = getRootInActiveWindow(); } catch (Throwable ignore) {}
+         if (active != null) {
+-            // Track BEFORE checking duplicates so the pool will recycle it
+-            // either way (we never call recycle() directly anywhere — that
+-            // was a v2 footgun).
+             track(active);
+-            boolean dup = false;
+-            for (AccessibilityNodeInfo r : result) if (r == active) { dup = true; break; }
+-            if (!dup) result.add(0, active);
++            result.add(active);
++            return result;
++        }
++
++        List<AccessibilityWindowInfo> windows = null;
++        try { windows = getWindows(); } catch (Throwable ignore) {}
++        if (windows == null || windows.isEmpty()) return result;
++        AccessibilityWindowInfo best = null;
++        int bestLayer = Integer.MIN_VALUE;
++        for (AccessibilityWindowInfo w : windows) {
++            if (w == null) continue;
++            int layer;
++            try { layer = w.getLayer(); } catch (Throwable t) { layer = 0; }
++            if (best == null || layer > bestLayer) {
++                best = w;
++                bestLayer = layer;
++            }
++        }
++        if (best != null) {
++            AccessibilityNodeInfo r = null;
++            try { r = best.getRoot(); } catch (Throwable ignore) {}
++            if (r != null) {
++                track(r);
++                result.add(r);
++            }
+         }
+         return result;
+     }
+@@ -3032,10 +3114,18 @@
+ 
+     private void track(AccessibilityNodeInfo node) {
+         if (node == null) return;
++        // AccessibilityNodeInfo.recycle() is deprecated/no-op from API 33.
++        // Avoid an IdentityHashMap put for every visited node on modern
++        // Android; legacy devices still need explicit recycling.
++        if (Build.VERSION.SDK_INT >= 33) return;
+         tickPool.put(node, Boolean.TRUE);
+     }
+ 
+     private void drainTickPool() {
++        if (Build.VERSION.SDK_INT >= 33) {
++            if (!tickPool.isEmpty()) tickPool.clear();
++            return;
++        }
+         if (tickPool.isEmpty()) return;
+         for (AccessibilityNodeInfo n : tickPool.keySet()) {
+             if (n == null) continue;
+@@ -3241,7 +3331,7 @@
+         final int likes = likesCount.get();
+         final int skipped = skippedCount.get();
+         final String act = lastAction == null ? "" : lastAction;
+-        handler.post(new Runnable() {
++        mainHandler.post(new Runnable() {
+             @Override public void run() { l.onUpdate(status, likes, skipped, act); }
+         });
+     }
+--- a/app/build.gradle	2026-08-19 11:06:15.917374750 +0000
++++ b/app/build.gradle	2026-08-19 11:42:48.461455927 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 36
+-        versionName '1.15.0-visible-snapshot'
++        versionCode 37
++        versionName '1.16.0-engine-thread'
+     }
+ 
+     buildTypes {

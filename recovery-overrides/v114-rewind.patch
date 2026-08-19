@@ -1,0 +1,77 @@
+--- app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -361,6 +361,8 @@
+     private long   firstNoProgressScrollMs = 0L;
+     private int    likesAtLastScroll       = 0;
+     private int    rewindStepsDone         = 0;
++    private String pendingRewindSignature  = null;
++    private int    unchangedRewindSteps    = 0;
+     private int    scrollPatternIndex      = 0; // rotates 0,1,2 within a streak
+     private int    catchUpScrollsRemaining = 0;
+     private int    idleRecoveryCount       = 0;
+@@ -554,6 +556,8 @@
+         firstNoProgressScrollMs = 0L;
+         likesAtLastScroll = 0;
+         rewindStepsDone = 0;
++        pendingRewindSignature = null;
++        unchangedRewindSteps = 0;
+         scrollPatternIndex = 0;
+         catchUpScrollsRemaining = 0;
+         idleRecoveryCount = 0;
+@@ -1677,12 +1681,41 @@
+      * has empirically proved liking works.
+      */
+     private long handleRewindToTop(List<AccessibilityNodeInfo> roots, long now) {
++        String currentSignature = viewportSignature(roots);
++
++        // Verify the previous downward swipe. dispatchGesture(true) at the top
++        // still returns true, so the old engine ALWAYS burned all 12 rewind
++        // steps. Two unchanged member anchors means we are already at the top.
++        if (pendingRewindSignature != null
++                && !pendingRewindSignature.isEmpty()
++                && !currentSignature.isEmpty()) {
++            if (pendingRewindSignature.equals(currentSignature)) {
++                unchangedRewindSteps++;
++                diagEvent("REWIND-VERIFY: viewport unchanged count=" + unchangedRewindSteps
++                        + " anchor=" + shortSig(currentSignature));
++            } else {
++                unchangedRewindSteps = 0;
++                diagEvent("REWIND-VERIFY: viewport moved toward top");
++            }
++            if (unchangedRewindSteps >= 2) {
++                pendingRewindSignature = null;
++                setAction(getString(R.string.action_rewind_done));
++                diagEvent("REWIND: top verified by unchanged viewport");
++                transitionTo(STATE_LOOK_LIKE);
++                return 250L;
++            }
++        }
++
+         if (rewindStepsDone >= MAX_REWIND_STEPS) {
++            pendingRewindSignature = null;
+             diagEvent("REWIND: max steps reached, transitioning to LOOK");
+             setAction(getString(R.string.action_rewind_done));
+             transitionTo(STATE_LOOK_LIKE);
+             return 350L;
+         }
++
++        pendingRewindSignature = currentSignature;
++
+         boolean acted = false;
+         AccessibilityNodeInfo scrollable = findScrollableInAll(roots);
+         boolean haveScrollable = scrollable != null;
+@@ -1694,10 +1727,12 @@
+             } catch (Throwable ignore) {}
+         }
+         boolean gestured = performGestureSwipeDown();
+-        diagEvent("REWIND step " + (rewindStepsDone + 1) + "/12: scrollable="
+-                + haveScrollable + " action=" + acted + " gesture=" + gestured);
++        diagEvent("REWIND step " + (rewindStepsDone + 1) + "/" + MAX_REWIND_STEPS
++                + ": scrollable=" + haveScrollable
++                + " action=" + acted + " gesture=" + gestured);
+ 
+         if (!acted && !gestured) {
++            pendingRewindSignature = null;
+             setAction(getString(R.string.action_rewind_done));
+             transitionTo(STATE_LOOK_LIKE);
+             return 350L;

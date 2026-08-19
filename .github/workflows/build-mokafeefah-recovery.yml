@@ -1,9 +1,9 @@
-name: Build Mokafeefah Recovery 1.13.1
+name: Build Mokafeefah Engine 1.14
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v1131-fix
+      - agent/mokafeefah-v114-engine
   pull_request:
   workflow_dispatch:
 
@@ -22,7 +22,7 @@ jobs:
       - name: Unpack recovered source
         run: unzip -q mokafeefah-base.zip -d src
 
-      - name: Apply reconstructed engine and UI
+      - name: Reconstruct 1.13.1 base
         run: |
           cd src/mokafeefah
           patch -p1 --fuzz=0 < ../../recovery-overrides/service-v113.patch
@@ -33,15 +33,20 @@ jobs:
           fi
           sed -i "s/versionCode 32/versionCode 33/" app/build.gradle
           sed -i -E "s/versionName '[^']+'/versionName '1.13.0-recovery'/" app/build.gradle
-
-      - name: Apply 1.13.1 stall and target safety fix
-        run: |
+          cd ../..
           sed '/^diff -ruN v113_orig\/app\/src\/main\/java\/com\/mokafeefah\/clicker\/MainActivity.java/,$d' recovery-overrides/v1131.patch > /tmp/v1131-engine.patch
           cd src/mokafeefah
           patch -p1 --fuzz=0 < /tmp/v1131-engine.patch
-          grep -n "sessionTargetPackage\|OFF_TARGET\|NO_PROGRESS_SCROLL_LIMIT\|STALL:" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -30
-          grep -n "btnStop\|stopAutomation" app/src/main/java/com/mokafeefah/clicker/MainActivity.java app/src/main/res/layout/activity_main.xml
+          sed -i "s/versionCode 33/versionCode 34/" app/build.gradle
+          sed -i -E "s/versionName '[^']+'/versionName '1.13.1-recovery'/" app/build.gradle
+
+      - name: Apply 1.14 core-engine overhaul
+        run: |
+          base64 -d recovery-overrides/v114-engine.patch.gz.b64 | gzip -d > /tmp/v114.patch
+          cd src/mokafeefah
+          patch -p0 --fuzz=0 < /tmp/v114.patch
           grep -n "versionCode\|versionName" app/build.gradle
+          grep -n "ScreenProbe\|LIKE-COMMIT\|SCROLL-VERIFY\|PERF-SNAPSHOT" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -30
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -54,13 +59,15 @@ jobs:
         with:
           gradle-version: '8.2.1'
 
-      - name: Build debug APK
+      - name: Build debug and unsigned release APKs
         working-directory: src/mokafeefah
-        run: gradle :app:assembleDebug --stacktrace
+        run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
 
-      - name: Upload APK
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.13.1-recovery-debug
-          path: src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
+          name: mokafeefah-v1.14.0-engine-apks
+          path: |
+            src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
+            src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error

@@ -1,9 +1,9 @@
-name: Build Mokafeefah Engine 1.23 V120 Core
+name: Build Mokafeefah Engine 1.24 Popup Stall Guard
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v123-v120-core-performance
+      - agent/mokafeefah-v124-popup-stall-guard
   pull_request:
   workflow_dispatch:
 
@@ -85,9 +85,14 @@ jobs:
           base64 -d recovery-overrides/v123-v120-core-performance.patch.gz.b64 | gzip -d > /tmp/v123.patch
           cd src/mokafeefah
           patch -p4 --fuzz=0 < /tmp/v123.patch
-          grep -n "versionCode\|versionName" app/build.gradle
-          grep -n "buildMs=\|leanTraversal\|STALL-DUMP: skipped by 120s throttle" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
           if grep -q "CACHE-HYGIENE: avgTickMs=" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
+
+      - name: Apply 1.24 popup stall guard
+        run: |
+          cd src/mokafeefah
+          patch -p4 --fuzz=0 < ../../recovery-overrides/v124-popup-stall-guard.patch
+          grep -n "versionCode\|versionName" app/build.gradle
+          grep -n "POPUP-WATCH\|STALL-POPUP-RECOVERY\|POST_CONFIRM_POPUP_RECOVERY_WINDOW_MS" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
           python3 - <<'PY'
           from pathlib import Path
           import hashlib
@@ -102,11 +107,17 @@ jobs:
               a, b = method(base, name), method(new, name)
               print(name, hashlib.sha256(a.encode()).hexdigest(), hashlib.sha256(b.encode()).hexdigest())
               if a != b:
-                  raise SystemExit(name + ' changed from 1.20')
+                  raise SystemExit(name + ' changed from exact 1.20 core')
           for literal in ('MAX_WAIT_AFTER_LIKE_MS = 8000L', 'MAX_WAIT_AFTER_YES_MS  = 8000L'):
               if literal not in new:
                   raise SystemExit('1.20 confirmation timeout changed: ' + literal)
-          print('CONFIRMATION CORE: exact 1.20 method bodies preserved')
+          required = ('STALL-POPUP-RECOVERY:', 'POPUP-WATCH: AFTER_YES timed out', 'POST_CONFIRM_POPUP_RECOVERY_WINDOW_MS = 45_000L')
+          for literal in required:
+              if literal not in new:
+                  raise SystemExit('missing v1.24 guard: ' + literal)
+          if "versionCode 45" not in Path('app/build.gradle').read_text():
+              raise SystemExit('versionCode 45 missing')
+          print('CONFIRMATION CORE: exact 1.20 method bodies preserved after v1.24')
           PY
 
       - name: Set up Java 17
@@ -127,7 +138,7 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.23.0-v120-core-performance-apks
+          name: mokafeefah-v1.24.0-popup-stall-guard-apks
           path: |
             src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
             src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk

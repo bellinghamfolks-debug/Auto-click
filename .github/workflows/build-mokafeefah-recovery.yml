@@ -1,9 +1,9 @@
-name: Build Mokafeefah Engine 1.24 Popup Stall Guard
+name: Build Mokafeefah Engine 1.25 Event Cache
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v124-popup-stall-guard
+      - agent/mokafeefah-v125-event-cache-engine
   pull_request:
   workflow_dispatch:
 
@@ -80,7 +80,7 @@ jobs:
           cp app/src/main/java/com/mokafeefah/clicker/ClickerService.java /tmp/v120-service.java
           if grep -q "triggering soft refresh after" app/src/main/java/com/mokafeefah/clicker/ClickerService.java; then exit 1; fi
 
-      - name: Apply 1.23 performance only over exact 1.20 core
+      - name: Apply 1.23 performance core
         run: |
           base64 -d recovery-overrides/v123-v120-core-performance.patch.gz.b64 | gzip -d > /tmp/v123.patch
           cd src/mokafeefah
@@ -91,13 +91,22 @@ jobs:
         run: |
           cd src/mokafeefah
           patch -p4 --fuzz=0 < ../../recovery-overrides/v124-popup-stall-guard.patch
+          grep -q "STALL-POPUP-RECOVERY:" app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+
+      - name: Apply 1.25 event cache engine
+        run: |
+          base64 -d recovery-overrides/v125-event-cache-engine.patch.gz.b64 | gzip -d > /tmp/v125.patch
+          cd src/mokafeefah
+          patch -p1 --fuzz=0 < /tmp/v125.patch
           grep -n "versionCode\|versionName" app/build.gradle
-          grep -n "POPUP-WATCH\|STALL-POPUP-RECOVERY\|POST_CONFIRM_POPUP_RECOVERY_WINDOW_MS" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
+          grep -n "EVENT-WAKE\|viewportCache\|rootMs=\|FLAG_PREFETCH_SIBLINGS" app/src/main/java/com/mokafeefah/clicker/ClickerService.java | head -120
           python3 - <<'PY'
           from pathlib import Path
           import hashlib
           base = Path('/tmp/v120-service.java').read_text()
           new = Path('app/src/main/java/com/mokafeefah/clicker/ClickerService.java').read_text()
+          xml = Path('app/src/main/res/xml/accessibility_service_config.xml').read_text()
+          gradle = Path('app/build.gradle').read_text()
           def method(src, name):
               marker = '    private long ' + name + '('
               st = src.index(marker)
@@ -111,13 +120,25 @@ jobs:
           for literal in ('MAX_WAIT_AFTER_LIKE_MS = 8000L', 'MAX_WAIT_AFTER_YES_MS  = 8000L'):
               if literal not in new:
                   raise SystemExit('1.20 confirmation timeout changed: ' + literal)
-          required = ('STALL-POPUP-RECOVERY:', 'POPUP-WATCH: AFTER_YES timed out', 'POST_CONFIRM_POPUP_RECOVERY_WINDOW_MS = 45_000L')
+          required = (
+              'FLAG_PREFETCH_SIBLINGS', 'activeRootNoPrefetch', 'childAtBoundedPrefetch',
+              'scheduleEngineTick', 'viewportLikeNodeCache', '.refresh()', 'rootMs=',
+              'EVENT_WAKE_DELAY_MS = 35L', 'EVENT_FALLBACK_MIN_MS = 650L',
+              'STALL-POPUP-RECOVERY:'
+          )
           for literal in required:
               if literal not in new:
-                  raise SystemExit('missing v1.24 guard: ' + literal)
-          if "versionCode 45" not in Path('app/build.gradle').read_text():
-              raise SystemExit('versionCode 45 missing')
-          print('CONFIRMATION CORE: exact 1.20 method bodies preserved after v1.24')
+                  raise SystemExit('missing v1.25 engine marker: ' + literal)
+          if 'versionCode 46' not in gradle or "versionName '1.25.0-event-cache-engine'" not in gradle:
+              raise SystemExit('v1.25 version metadata missing')
+          if 'typeViewScrolled' not in xml or 'android:notificationTimeout="60"' not in xml:
+              raise SystemExit('event-driven accessibility XML not configured')
+          if 'CACHE-HYGIENE: avgTickMs=' in new:
+              raise SystemExit('legacy cache hygiene returned')
+          if new.count('{') != new.count('}'):
+              raise SystemExit('unbalanced braces')
+          print('V1.25 ARCHITECTURE CHECKS: PASS')
+          print('CONFIRMATION CORE: exact 1.20 method bodies preserved')
           PY
 
       - name: Set up Java 17
@@ -138,7 +159,7 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.24.0-popup-stall-guard-apks
+          name: mokafeefah-v1.25.0-event-cache-engine-apks
           path: |
             src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
             src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk

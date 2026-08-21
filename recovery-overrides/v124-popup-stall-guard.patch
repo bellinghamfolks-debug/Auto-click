@@ -1,0 +1,133 @@
+diff -ruN /mnt/data/v124_before/app/build.gradle /mnt/data/v124_work/app/build.gradle
+--- /mnt/data/v124_before/app/build.gradle	2026-08-19 16:48:27.000000000 +0000
++++ /mnt/data/v124_work/app/build.gradle	2026-08-21 11:24:45.349812428 +0000
+@@ -10,8 +10,8 @@
+         applicationId 'com.mokafeefah.clicker'
+         minSdk 24
+         targetSdk 34
+-        versionCode 44
+-        versionName '1.23.0-v120-core-performance'
++        versionCode 45
++        versionName '1.24.0-popup-stall-guard'
+     }
+ 
+     buildTypes {
+diff -ruN /mnt/data/v124_before/app/src/main/java/com/mokafeefah/clicker/ClickerService.java /mnt/data/v124_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+--- /mnt/data/v124_before/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-19 16:48:27.000000000 +0000
++++ /mnt/data/v124_work/app/src/main/java/com/mokafeefah/clicker/ClickerService.java	2026-08-21 11:24:45.348970035 +0000
+@@ -127,6 +127,9 @@
+     private static final long MAX_WAIT_AFTER_YES_MS  = 8000L;
+     // v1.23: diagnostics must never become part of a long-session stall.
+     private static final long STALL_FULL_DUMP_INTERVAL_MS = 120_000L;
++    // v1.24: a timed-out AFTER_YES may leave Mawada's modal over the list.
++    // Only the first verified stall soon after that exact timeout may send BACK.
++    private static final long POST_CONFIRM_POPUP_RECOVERY_WINDOW_MS = 45_000L;
+     private static final long POST_BACK_WAIT_MS      = 900L;
+     private static final long POST_SCROLL_WAIT_MS    = 1800L;
+ 
+@@ -646,6 +649,9 @@
+     private long lastAccessibilityCacheClearMs = 0L;
+     private int accessibilityCacheClearCount = 0;
+     private long lastAutoStallFullDumpMs = 0L;
++    private long suspectedPostConfirmPopupAtMs = 0L;
++    private int suspectedPostConfirmPopupLikeCount = -1;
++    private boolean postConfirmPopupBackAttempted = false;
+     private int consecutiveTickErrors = 0;
+     private int    state = STATE_LOOK_LIKE;
+     private long   stateChangedAt = 0L;
+@@ -970,11 +976,45 @@
+ 
+     private void transitionTo(int newState) {
+         int oldState = this.state;
++        long now = System.currentTimeMillis();
++        long oldStateAgeMs = Math.max(0L, now - this.stateChangedAt);
++
++        // v1.24 observes the exact 1.20 confirmation state machine without
++        // changing handleAfterLike()/handleAfterYes(). A transition from
++        // AFTER_YES -> LOOK after the 8s ceiling means 1.20 timed out waiting
++        // for Mawada's close control. Keep a short-lived suspicion marker; it
++        // is acted on only after three independently verified failed swipes.
++        if (oldState == STATE_AFTER_YES && newState == STATE_LOOK_LIKE) {
++            if (oldStateAgeMs > MAX_WAIT_AFTER_YES_MS) {
++                suspectedPostConfirmPopupAtMs = now;
++                suspectedPostConfirmPopupLikeCount = likesCount.get();
++                postConfirmPopupBackAttempted = false;
++                diagEvent("POPUP-WATCH: AFTER_YES timed out at like #"
++                        + suspectedPostConfirmPopupLikeCount
++                        + " ageMs=" + oldStateAgeMs);
++            } else {
++                clearPostConfirmPopupWatch("normal AFTER_YES exit");
++            }
++        } else if (newState == STATE_AFTER_LIKE) {
++            // A new transaction proves the previous modal is not blocking the
++            // list, so an old timeout marker must never trigger a later BACK.
++            clearPostConfirmPopupWatch("new like transaction");
++        }
++
+         this.state = newState;
+-        this.stateChangedAt = System.currentTimeMillis();
++        this.stateChangedAt = now;
+         if (oldState != newState) diagEvent("transition " + stateName(oldState) + " -> " + stateName(newState));
+     }
+ 
++    private void clearPostConfirmPopupWatch(String reason) {
++        if (suspectedPostConfirmPopupAtMs != 0L) {
++            diagEvent("POPUP-WATCH: cleared reason=" + reason);
++        }
++        suspectedPostConfirmPopupAtMs = 0L;
++        suspectedPostConfirmPopupLikeCount = -1;
++        postConfirmPopupBackAttempted = false;
++    }
++
+     private static String stateName(int s) {
+         switch (s) {
+             case STATE_REWIND_TO_TOP:   return "REWIND";
+@@ -2247,6 +2287,7 @@
+             firstNoProgressScrollMs = 0L;
+             consecutiveNoProgressScrolls = 0;
+             processedBounds.clear();
++            clearPostConfirmPopupWatch("viewport advanced");
+             diagEvent("SCROLL-VERIFY: viewport advanced " + shortSig(before)
+                     + " -> " + shortSig(after)
+                     + " — cleared processed set for NEW viewport");
+@@ -2306,6 +2347,40 @@
+             diagEvent("STALL-DUMP: skipped by 120s throttle");
+         }
+ 
++        // v1.24: if and only if 1.20 itself timed out leaving AFTER_YES,
++        // and this is the first verified 3-swipe stall soon afterward with no
++        // intervening like or viewport movement, dismiss one possible leftover
++        // modal using Android BACK. Never repeat BACK for the same confirmation.
++        long popupWatchAgeMs = suspectedPostConfirmPopupAtMs == 0L
++                ? Long.MAX_VALUE : Math.max(0L, now - suspectedPostConfirmPopupAtMs);
++        boolean eligiblePopupRecovery = suspectedPostConfirmPopupAtMs != 0L
++                && !postConfirmPopupBackAttempted
++                && likesCount.get() == suspectedPostConfirmPopupLikeCount
++                && popupWatchAgeMs <= POST_CONFIRM_POPUP_RECOVERY_WINDOW_MS;
++        if (eligiblePopupRecovery) {
++            postConfirmPopupBackAttempted = true;
++            boolean backSent = false;
++            try { backSent = performGlobalAction(GLOBAL_ACTION_BACK); }
++            catch (Throwable ignore) {}
++            lastBackTime = now;
++            pendingScrollSignature = null;
++            unchangedViewportScrolls = 0;
++            consecutiveNoProgressScrolls = 0;
++            firstNoProgressScrollMs = 0L;
++            lastButtonFoundMs = now;
++            diagEvent("STALL-POPUP-RECOVERY: AFTER_YES timeout + 3 unchanged gestures; "
++                    + "BACK=" + backSent
++                    + " like=" + suspectedPostConfirmPopupLikeCount
++                    + " watchAgeMs=" + popupWatchAgeMs
++                    + " processedBoundsRetained=" + processedBounds.size());
++            transitionTo(STATE_LOOK_LIKE);
++            return POST_BACK_WAIT_MS;
++        }
++        if (suspectedPostConfirmPopupAtMs != 0L
++                && popupWatchAgeMs > POST_CONFIRM_POPUP_RECOVERY_WINDOW_MS) {
++            clearPostConfirmPopupWatch("recovery window expired");
++        }
++
+         pendingScrollSignature = null;
+         unchangedViewportScrolls = 0;
+         consecutiveNoProgressScrolls = 0;

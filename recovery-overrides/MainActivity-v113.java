@@ -60,7 +60,7 @@ public class MainActivity extends AppCompatActivity {
 
         List<String> profileKeywords = new ArrayList<>(Arrays.asList(PROFILE_KEYWORDS));
         ClickerService.BotConfig cfg = new ClickerService.BotConfig(
-                "إهتمام", "نعم", "إغلاق", "", profileKeywords,
+                "إهتمام", "نعم", "موافق", "", profileKeywords,
                 250L, 1500L, 180_000L,
                 true, false, true, "three_dots");
 

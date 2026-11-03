@@ -1,4 +1,4 @@
-name: Build Mokafeefah Engine 1.26 Direct Interest
+name: Build Mokafeefah Engine 1.27 Viewport Batch
 
 on:
   push:
@@ -144,6 +144,13 @@ jobs:
       - name: Upgrade to 1.26 direct interest and long-run diagnostics
         run: python3 scripts/apply-v126-direct-interest.py
 
+      - name: Apply 1.27 viewport batching
+        working-directory: src/mokafeefah
+        run: |
+          patch -p1 --fuzz=0 < ../../recovery-overrides/v127-viewport-batch.patch
+          sed -i "s/versionCode 47/versionCode 48/; s/1.26.0-direct-interest-diagnostics/1.27.0-viewport-batch/" app/build.gradle
+          grep -q 'versionCode 48' app/build.gradle
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -179,14 +186,14 @@ jobs:
           printf '%s' "$SIGN_KEYSTORE_B64" | base64 -d > /tmp/mokafeefah-sign/original.jks
           BT="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           "$BT/zipalign" -f 4 app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/app-release-aligned.apk
-          "$BT/apksigner" sign --ks /tmp/mokafeefah-sign/original.jks --ks-key-alias "$SIGN_ALIAS" --ks-pass env:SIGN_STORE_PASS --key-pass env:SIGN_KEY_PASS --out app/build/outputs/apk/release/mokafeefah-v1.26-signed.apk app/build/outputs/apk/release/app-release-aligned.apk
-          "$BT/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/mokafeefah-v1.26-signed.apk | tee /tmp/mokafeefah-sign/verification.txt
+          "$BT/apksigner" sign --ks /tmp/mokafeefah-sign/original.jks --ks-key-alias "$SIGN_ALIAS" --ks-pass env:SIGN_STORE_PASS --key-pass env:SIGN_KEY_PASS --out app/build/outputs/apk/release/mokafeefah-v1.27-signed.apk app/build/outputs/apk/release/app-release-aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/mokafeefah-v1.27-signed.apk | tee /tmp/mokafeefah-sign/verification.txt
           if [ -n "$EXPECTED_CERT_SHA256" ]; then
             ACTUAL="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/mokafeefah-sign/verification.txt | head -1 | tr 'A-F' 'a-f' | tr -d ': ')"
             EXPECTED="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr 'A-F' 'a-f' | tr -d ': ')"
             if [ -z "$ACTUAL" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
               echo '::error::Certificate fingerprint mismatch; refusing to publish signed APK'
-              rm -f app/build/outputs/apk/release/mokafeefah-v1.26-signed.apk
+              rm -f app/build/outputs/apk/release/mokafeefah-v1.27-signed.apk
               exit 1
             fi
           fi
@@ -194,9 +201,9 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: mokafeefah-v1.26.0-direct-interest-diagnostics-apks
+          name: mokafeefah-v1.27.0-viewport-batch-apks
           path: |
             src/mokafeefah/app/build/outputs/apk/debug/app-debug.apk
             src/mokafeefah/app/build/outputs/apk/release/app-release-unsigned.apk
-            src/mokafeefah/app/build/outputs/apk/release/mokafeefah-v1.26-signed.apk
+            src/mokafeefah/app/build/outputs/apk/release/mokafeefah-v1.27-signed.apk
           if-no-files-found: error

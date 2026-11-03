@@ -1,0 +1,256 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -646,6 +646,7 @@
+         }
+     }
+ 
++    private long scrollSettlesAtUptime;
+     private VisibleScreenSnapshot currentProbe = null;
+     private int lastProbeNativeQueries = 0;
+     private int lastProbeNativeCandidates = 0;
+@@ -1303,6 +1304,16 @@
+             }
+         }
+ 
++        // Events can wake the engine before a gesture finishes or before a
++        // direct tap has had time to show a duplicate dialog.
++        if (pendingScrollSignature != null &&
++                SystemClock.uptimeMillis() < scrollSettlesAtUptime) return 180L;
++        if (state == STATE_AFTER_LIKE || state == STATE_AFTER_YES) {
++            long remaining = 1800L - (now - stateChangedAt);
++            if (remaining > 0L) return remaining;
++            return handleV126DirectInterest(roots, now);
++        }
++
+         // v1.25 fast viewport path. Between popup cycles the member list itself
+         // normally does not move. Reuse one refreshed LIKE node from the last
+         // verified viewport instead of rebuilding ~155 accessibility nodes.
+@@ -1317,19 +1328,8 @@
+             fastCachedLikeCandidate = nextLiveCachedLikeCandidate();
+         }
+ 
+-        // Keep the 1.20 confirmation path untouched: AFTER_LIKE and AFTER_YES
+-        // use the exact legacy snapshot traversal. For LOOK, a valid cached
+-        // candidate means no full-tree probe is needed this cycle.
+-        boolean preserveV120ConfirmationTraversal =
+-                state == STATE_AFTER_LIKE || state == STATE_AFTER_YES;
+         if (fastCachedLikeCandidate == null) {
+-            currentProbe = new VisibleScreenSnapshot(roots, !preserveV120ConfirmationTraversal);
+-            if (state == STATE_LOOK_LIKE && pendingScrollSignature == null
+-                    && suspectedPostConfirmPopupAtMs == 0L) {
+-                rebuildViewportLikeNodeCache(currentProbe);
+-            }
+-        } else {
+-            currentProbe = null;
++            currentProbe = new VisibleScreenSnapshot(roots, true);
+         }
+ 
+         // Verify the result of the previous scroll using actual viewport
+@@ -1338,6 +1338,10 @@
+             return 350L;
+         }
+ 
++        if (state == STATE_LOOK_LIKE && currentProbe != null &&
++                suspectedPostConfirmPopupAtMs == 0L) {
++            rebuildViewportLikeNodeCache(currentProbe);
++        }
+         diagMaybeSnapshot(now, roots);
+ 
+         // v9: idle-timeout check is now after roots are collected so the
+@@ -1587,6 +1591,7 @@
+                 List<AccessibilityNodeInfo> hits =
+                         root.findAccessibilityNodeInfosByText("مضاف");
+                 if (hits == null) continue;
++                for (AccessibilityNodeInfo hit : hits) track(hit);
+                 for (AccessibilityNodeInfo hit : hits) {
+                     if (hit == null || !hit.isVisibleToUser()) continue;
+                     String raw = String.valueOf(hit.getText())
+@@ -1596,6 +1601,10 @@
+                             && (message.contains("اهتمام")
+                             || message.contains("اضافته")
+                             || message.contains("مره اخري"))) return true;
++                    if (currentProbe == null) {
++                        currentProbe = new VisibleScreenSnapshot(roots, true);
++                        return v126HasAlreadyInterestedDialog(roots);
++                    }
+                 }
+             } catch (Throwable ignore) {}
+         }
+@@ -1627,7 +1636,7 @@
+             diagEvent("V126-DUPLICATE-POPUP: clicked موافق and skipped duplicate");
+             v126DuplicateSinceMs = 0L;
+             v126DuplicateBackAttempted = false;
+-            transitionTo(STATE_MUST_SCROLL);
++            transitionTo(STATE_LOOK_LIKE);
+             return 700L;
+         }
+         // One guarded BACK only if the same independently verified
+@@ -1663,6 +1672,11 @@
+ 
+     private long handleV126DirectInterest(List<AccessibilityNodeInfo> roots, long now) {
+         v126SessionHealth(now);
++        // Some WebViews expose the error sentence only as split labels.
++        // A visible dialog action justifies a full probe of this exceptional frame.
++        if (findExactClickableInAll(roots, "موافق") != null) {
++            currentProbe = new VisibleScreenSnapshot(roots, true);
++        }
+         long popup = v126HandleDuplicateDialog(roots, now);
+         if (popup >= 0L) return popup;
+         // The app no longer opens a YES confirmation. Wait briefly for a
+@@ -1675,8 +1689,8 @@
+             diagEvent("V126-DIRECT: no pending tap; moving to verified scroll");
+         }
+         lastButtonFoundMs = now;
+-        transitionTo(STATE_MUST_SCROLL);
+-        return 350L;
++        transitionTo(STATE_LOOK_LIKE);
++        return 150L;
+     }
+ 
+     private long handleV126MustScroll(List<AccessibilityNodeInfo> roots, long now) {
+@@ -1709,12 +1723,10 @@
+             noLikeControlsSinceMs = 0L;
+             String key = boundsKey(likeBtn);
+ 
+-            String fp = fingerprintMemberFromButton(likeBtn);
+-            // v1.12.14: session-local dedup using the permissive loose ID.
+-            // Catches refresh-loop repeats even when the strict fp would be
+-            // null (search-results card layout doesn't always satisfy
+-            // fingerprintMemberFromButton's Arabic-letter / length rules).
+-            String looseId = looseMemberId(likeBtn);
++            String cardText = readMemberCardText(likeBtn);
++            String hash = cardText == null ? null : LikedMembersDb.fingerprint(cardText);
++            String fp = config.dedupEnabled && cardText != null && hasArabicLetter(cardText) ? hash : null;
++            String looseId = hash == null ? null : "T:" + hash;
+             if (looseId != null && sessionMemberIds.contains(looseId)) {
+                 processedBounds.add(key);
+                 skippedCount.incrementAndGet();
+@@ -1850,7 +1862,7 @@
+         diagEvent("LOOK: " + visibleLikeControls
+                 + " visible like controls all processed; scrolling to next viewport");
+         transitionTo(STATE_MUST_SCROLL);
+-        return 300L;
++        return handleMustScroll(roots, now);
+     }
+ 
+     /**
+@@ -2599,6 +2611,7 @@
+                 + (lastViewScrolledEventMs == 0L ? -1L : Math.max(0L, now - lastViewScrolledEventMs)));
+         if (scrolled) {
+             pendingScrollSignature = beforeSignature;
++            scrollSettlesAtUptime = SystemClock.uptimeMillis() + 450L;
+             setAction(getString(R.string.action_scroll));
+         } else {
+             // No action was even accepted. Count this immediately as a failed
+@@ -2652,9 +2665,8 @@
+             diagEvent("SCROLL-VERIFY: viewport advanced " + shortSig(before)
+                     + " -> " + shortSig(after)
+                     + " — cleared processed set for NEW viewport");
+-            // Do not scan/click in the same tick that validated movement.
+-            // Build a fresh snapshot on the next cycle.
+-            return true;
++            // Continue LOOK with the same live snapshot that proved movement.
++            return false;
+         }
+ 
+         unchangedViewportScrolls++;
+@@ -2673,7 +2685,8 @@
+             return true;
+         }
+ 
+-        // Crucial invariant: an unchanged viewport keeps processedBounds and
++        transitionTo(STATE_MUST_SCROLL);
++        // An unchanged viewport keeps processedBounds and
+         // consumes this tick. The next cycle goes back to MUST_SCROLL instead
+         // of clicking the same cards again.
+         return true;
+@@ -3572,7 +3585,7 @@
+      * buffer simply not help on that screen rather than collide everyone
+      * onto a single shared label.
+      */
+-    private String looseMemberId(AccessibilityNodeInfo likeBtn) {
++    private String readMemberCardText(AccessibilityNodeInfo likeBtn) {
+         if (likeBtn == null) return null;
+         AccessibilityNodeInfo card = climbToMemberCard(likeBtn);
+         if (card == null) return null;
+@@ -3582,39 +3595,15 @@
+         StringBuilder sb = new StringBuilder(256);
+         collectCardText(card, cardR, sb, 0);
+         if (sb.length() < MIN_TEXT_CHARS_FOR_FP) return null;
+-        String h = LikedMembersDb.fingerprint(sb.toString());
+-        return h == null ? null : "T:" + h;
++        return sb.toString();
+     }
+ 
+-    /**
+-     * Compute a per-member fingerprint by collecting visible text inside the
+-     * card's bounding rect. Filters by isVisibleToUser AND bounds intersection
+-     * so off-screen list items don't contaminate the hash.
+-     */
+-    private String fingerprintMemberFromButton(AccessibilityNodeInfo likeBtn) {
+-        if (likeBtn == null || !config.dedupEnabled) return null;
+-        AccessibilityNodeInfo card = climbToMemberCard(likeBtn);
+-        if (card == null) return null;
+-        Rect cardR = new Rect();
+-        card.getBoundsInScreen(cardR);
+-        if (cardR.isEmpty()) return null;
+-
+-        StringBuilder sb = new StringBuilder(256);
+-        collectCardText(card, cardR, sb, 0);
+-        if (sb.length() < MIN_TEXT_CHARS_FOR_FP) return null;
+-
+-        // Validation: a real member card usually has SOME Arabic letters in
+-        // it. If we see none, treat the fingerprint as untrusted and return
+-        // null so the like fires but is NOT marked as deduped (avoids
+-        // poisoning the DB with junk).
+-        boolean hasArabic = false;
+-        for (int i = 0; i < sb.length(); i++) {
+-            char c = sb.charAt(i);
+-            if (c >= 0x0600 && c <= 0x06FF) { hasArabic = true; break; }
++    private boolean hasArabicLetter(String text) {
++        for (int i = 0; i < text.length(); i++) {
++            char c = text.charAt(i);
++            if (c >= 0x0600 && c <= 0x06FF) return true;
+         }
+-        if (!hasArabic) return null;
+-
+-        return LikedMembersDb.fingerprint(sb.toString());
++        return false;
+     }
+ 
+     private void collectCardText(AccessibilityNodeInfo node, Rect cardBounds,
+@@ -3725,7 +3714,7 @@
+         if (node == null) return null;
+         try {
+             if (Build.VERSION.SDK_INT >= 33) {
+-                return node.getChild(index, AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS);
++                return node.getChild(index, 0);
+             }
+             return node.getChild(index);
+         } catch (Throwable t) {
+@@ -3829,7 +3818,7 @@
+             String key;
+             try { key = boundsKey(clickable); } catch (Throwable t) { continue; }
+             if (!seenBounds.add(key)) continue;
+-            clickableNodes.add(clickable);
++            clickableNodes.add(labelNode);
+         }
+         if (clickableNodes.isEmpty()) {
+             clearViewportLikeNodeCache();
+@@ -3846,10 +3835,13 @@
+             viewportCacheMisses++;
+             return null;
+         }
+-        for (AccessibilityNodeInfo clickable : viewportLikeNodeCache) {
+-            if (clickable == null) continue;
++        String needle = normalizeArabic(config.likeText);
++        for (AccessibilityNodeInfo label : viewportLikeNodeCache) {
++            if (label == null) continue;
+             try {
+-                if (!clickable.refresh()) continue;
++                if (!label.refresh() || !label.isVisibleToUser() || !textMatches(label, needle)) continue;
++                AccessibilityNodeInfo clickable = climbToClickable(label);
++                if (clickable == null) continue;
+                 if (!clickable.isVisibleToUser()) continue;
+                 if (!clickable.isEnabled() || !clickable.isClickable()) continue;
+                 String key = boundsKey(clickable);

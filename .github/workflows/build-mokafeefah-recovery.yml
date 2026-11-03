@@ -1,9 +1,9 @@
-name: Build Mokafeefah Engine 1.25 Event Cache
+name: Build Mokafeefah Engine 1.26 Direct Interest
 
 on:
   push:
     branches:
-      - agent/mokafeefah-v125-event-cache-engine
+      - agent/mokafeefah-v126-direct-interest-diagnostics
   pull_request:
   workflow_dispatch:
 
@@ -139,6 +139,27 @@ jobs:
               raise SystemExit('unbalanced braces')
           print('V1.25 ARCHITECTURE CHECKS: PASS')
           print('CONFIRMATION CORE: exact 1.20 method bodies preserved')
+          PY
+
+      - name: Inspect recovered engine for 1.26 migration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("src/mokafeefah/app/src/main/java/com/mokafeefah/clicker/ClickerService.java")
+          lines=p.read_text().splitlines()
+          targets=["private long handleLookLike(", "private long handleAfterLike(", "private long handleAfterYes(",
+                   "private void commitPendingLike(", "private long handleMustScroll(", "private void transitionTo(",
+                   "private void diagEvent(", "private boolean find", "private AccessibilityNodeInfo findClickableInAll(",
+                   "private void captureFailureDump(", "public String captureDiagnosticNow(", "class BotConfig",
+                   "private void autoStopWithDiagnostic("]
+          for term in targets:
+              for i,line in enumerate(lines):
+                  if term in line:
+                      print("\\n=== METHOD "+term+" AT LINE "+str(i+1)+" ===")
+                      for j in range(i,min(len(lines),i+95)):
+                          if j>i+7 and lines[j].startswith("    private "): break
+                          print(f"{j+1}: {lines[j]}")
+                      break
           PY
 
       - name: Set up Java 17

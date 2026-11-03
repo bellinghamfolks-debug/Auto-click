@@ -1,0 +1,253 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -1015,9 +1015,10 @@
+         accessibilityCacheClearCount = 0;
+         consecutiveTickErrors = 0;
+         v126LastHeartbeatMs = v126LastGrowthMs = v126LastStallNoteMs = 0L;
++        loadingNextCheckMs = loadingGoneSinceMs = 0L;
+         v126LastMilestone = 0;
+         v126LastObservedCount = -1;
+-        v126DuplicateSinceMs = v126LastDuplicateLogMs = 0L;
++        v126DuplicateSinceMs = duplicateNextCheckMs = duplicateLastClickMs = duplicateMissingSinceMs = 0L;
+         v126DuplicateBackAttempted = false;
+         accessibilityEpoch = 0L;
+         lastAccessibilityEventUptimeMs = 0L;
+@@ -1317,13 +1318,17 @@
+             }
+         }
+ 
+-        // Events can wake the engine before a gesture finishes or before a
+-        // direct tap has had time to show a duplicate dialog.
+-        if (pendingScrollSignature != null &&
+-                SystemClock.uptimeMillis() < scrollSettlesAtUptime) return 180L;
+-        if (state == STATE_AFTER_LIKE || state == STATE_AFTER_YES) {
++        boolean afterTap = state == STATE_AFTER_LIKE || state == STATE_AFTER_YES;
++        if (afterTap && v126DuplicateSinceMs == 0L) {
+             long remaining = 1800L - (now - stateChangedAt);
+             if (remaining > 0L) return remaining;
++        }
++        if ((afterTap || state == STATE_LOOK_LIKE || state == STATE_MUST_SCROLL || v126DuplicateSinceMs != 0L)
++                && waitForInterestRequest(roots, now)) return 400L;
++        if (v126DuplicateSinceMs != 0L) return v126HandleDuplicateDialog(roots, now);
++        if (pendingScrollSignature != null &&
++                SystemClock.uptimeMillis() < scrollSettlesAtUptime) return 180L;
++        if (afterTap) {
+             return handleV126DirectInterest(roots, now);
+         }
+ 
+@@ -1484,7 +1489,9 @@
+     private int v126LastMilestone = 0;
+     private long v126DuplicateSinceMs = 0L;
+     private boolean v126DuplicateBackAttempted = false;
+-    private long v126LastDuplicateLogMs = 0L;
++    private long duplicateNextCheckMs;
++    private long duplicateLastClickMs;
++    private long duplicateMissingSinceMs;
+ 
+     // Bounded, private on-device telemetry. Only aggregated counters and
+     // reasons are persisted, never member names, page text or passwords.
+@@ -1586,96 +1593,121 @@
+         }
+     }
+ 
++    private long loadingNextCheckMs;
++    private long loadingGoneSinceMs;
++
++    // The app may put this blocking spinner directly over the duplicate dialog.
++    private boolean waitForInterestRequest(List<AccessibilityNodeInfo> roots, long now) {
++        if (now < loadingNextCheckMs) return true;
++        for (AccessibilityNodeInfo root : roots) {
++            List<AccessibilityNodeInfo> hits = root.findAccessibilityNodeInfosByText("جاري");
++            if (hits == null) continue;
++            for (AccessibilityNodeInfo hit : hits) track(hit);
++            for (AccessibilityNodeInfo hit : hits) {
++                if (hit == null || !hit.isVisibleToUser()) continue;
++                String msg = normalizeArabic(String.valueOf(hit.getText()) + " " + hit.getContentDescription());
++                if (!msg.contains("جاري") || !msg.contains("اضاف") ||
++                        !(msg.contains("العضو") || msg.contains("اهتمام"))) continue;
++                if (loadingNextCheckMs == 0L) diagEvent("INTEREST-LOADING");
++                loadingNextCheckMs = now + 450L;
++                loadingGoneSinceMs = 0L;
++                lastButtonFoundMs = now;
++                if (v126DuplicateSinceMs != 0L) v126DuplicateSinceMs = now;
++                return true;
++            }
++        }
++        if (loadingNextCheckMs != 0L) {
++            if (loadingGoneSinceMs == 0L) {
++                loadingGoneSinceMs = now;
++                loadingNextCheckMs = now + 450L;
++                return true;
++            }
++            loadingGoneSinceMs = loadingNextCheckMs = 0L;
++            diagEvent("INTEREST-LOADING-CLOSED");
++        }
++        return false;
++    }
++
+     // A modal must be positively identified by its own text, not merely
+     // by the common label "موافق". The snapshot is already bounded/visible.
+     private boolean v126HasAlreadyInterestedDialog(List<AccessibilityNodeInfo> roots) {
+-        if (currentProbe != null) {
+-            boolean duplicate = currentProbe.countMatches("مضاف") > 0;
+-            boolean context = currentProbe.countMatches("الاهتمام") > 0
+-                    || currentProbe.countMatches("الإهتمام") > 0
+-                    || currentProbe.countMatches("إضافته مرة") > 0;
+-            if (duplicate && context) return true;
+-            if (!duplicate && !currentProbe.truncated && currentProbe.countMatches("موافق") == 0) return false;
+-        }
+-        // Android native text index is a targeted fallback for truncated
+-        // snapshots / separate modal windows; never traverse all 5000 nodes.
+-        if (roots == null) return false;
++        if (currentProbe != null && duplicateInSnapshot()) return true;
++        if (currentProbe != null && !currentProbe.truncated &&
++                currentProbe.countMatches("مضاف") == 0 && currentProbe.countMatches("موافق") == 0) return false;
+         for (AccessibilityNodeInfo root : roots) {
+-            if (root == null) continue;
+-            try {
+-                List<AccessibilityNodeInfo> hits =
+-                        root.findAccessibilityNodeInfosByText("مضاف");
+-                if (hits == null) continue;
+-                for (AccessibilityNodeInfo hit : hits) track(hit);
+-                for (AccessibilityNodeInfo hit : hits) {
+-                    if (hit == null || !hit.isVisibleToUser()) continue;
+-                    String raw = String.valueOf(hit.getText())
+-                            + " " + String.valueOf(hit.getContentDescription());
+-                    String message = normalizeArabic(raw);
+-                    if (message.contains("مضاف")
+-                            && (message.contains("اهتمام")
+-                            || message.contains("اضافته")
+-                            || message.contains("مره اخري"))) return true;
+-                    if (currentProbe == null) {
+-                        currentProbe = new VisibleScreenSnapshot(roots, true);
+-                        return v126HasAlreadyInterestedDialog(roots);
+-                    }
+-                }
+-            } catch (Throwable ignore) {}
++            List<AccessibilityNodeInfo> hits = root.findAccessibilityNodeInfosByText("مضاف");
++            if (hits == null) continue;
++            for (AccessibilityNodeInfo hit : hits) track(hit);
++            for (AccessibilityNodeInfo hit : hits) {
++                if (hit == null || !hit.isVisibleToUser()) continue;
++                String msg = normalizeArabic(String.valueOf(hit.getText()) + " " + hit.getContentDescription());
++                if (msg.contains("مضاف") && (msg.contains("اهتمام") || msg.contains("اضافته")
++                        || msg.contains("مسبقا") || msg.contains("سابقا") || msg.contains("مره اخري"))) return true;
++            }
++        }
++        // Only pay for a split-label snapshot when there is a visible dialog action.
++        if (currentProbe == null && findExactClickableInAll(roots, "موافق") != null) {
++            currentProbe = new VisibleScreenSnapshot(roots, true);
++            return duplicateInSnapshot();
+         }
+         return false;
+     }
+ 
+-    // Returns -1 if there is no matching modal, otherwise a wait interval.
++    private boolean duplicateInSnapshot() {
++        boolean added = currentProbe.countMatches("مضاف") > 0;
++        boolean previous = currentProbe.countMatches("مسبقا") > 0 || currentProbe.countMatches("سابقا") > 0;
++        boolean interest = currentProbe.countMatches("الاهتمام") > 0 || currentProbe.countMatches("إضافته مرة") > 0;
++        return (added && (interest || previous))
++                || (previous && interest && currentProbe.countMatches("إضافة") > 0);
++    }
++
+     private long v126HandleDuplicateDialog(List<AccessibilityNodeInfo> roots, long now) {
++        if (v126DuplicateSinceMs != 0L && now < duplicateNextCheckMs) return duplicateNextCheckMs - now;
+         if (!v126HasAlreadyInterestedDialog(roots)) {
+-            v126DuplicateSinceMs = 0L;
+-            v126DuplicateBackAttempted = false;
+-            return -1L;
++            if (v126DuplicateSinceMs == 0L) return -1L;
++            // A WebView can expose one empty frame while updating the modal.
++            if (duplicateMissingSinceMs == 0L) duplicateMissingSinceMs = now;
++            if (now - duplicateMissingSinceMs >= 350L) {
++                v126DuplicateSinceMs = duplicateNextCheckMs = duplicateMissingSinceMs = duplicateLastClickMs = 0L;
++                transitionTo(STATE_LOOK_LIKE);
++                diagEvent("DUPLICATE-CLOSED");
++                return 100L;
++            }
++            duplicateNextCheckMs = now + 350L;
++            return 350L;
+         }
+-        clearViewportLikeNodeCache();
++        duplicateMissingSinceMs = 0L;
++        lastButtonFoundMs = now;
+         if (v126DuplicateSinceMs == 0L) {
++            clearViewportLikeNodeCache();
+             v126DuplicateSinceMs = now;
+             v126DuplicateBackAttempted = false;
+-            diagEvent("V126-DUPLICATE-POPUP: identified by visible error message; looking for موافق");
+-        }
+-        AccessibilityNodeInfo ok = findClickableInAll(roots, "موافق");
+-        if (ok != null && performClick(ok)) {
+-            if (pendingLikeStartedMs != 0L) {
+-                clearPendingLike("v126 already in interest list");
+-            } else {
+-                diagEvent("V126-LATE-DUPLICATE: no pending request; review last tentative direct count");
+-            }
++            if (pendingLikeLooseId != null) sessionMemberIds.add(pendingLikeLooseId);
++            clearPendingLike("already in interest list");
+             skippedCount.incrementAndGet();
+-            lastButtonFoundMs = now;
+-            diagEvent("V126-DUPLICATE-POPUP: clicked موافق and skipped duplicate");
+-            v126DuplicateSinceMs = 0L;
+-            v126DuplicateBackAttempted = false;
+-            transitionTo(STATE_LOOK_LIKE);
+-            return 700L;
++            diagEvent("DUPLICATE-OPEN: skipped once");
+         }
+-        // One guarded BACK only if the same independently verified
+-        // duplicate modal stays stuck for over eight seconds.
+-        if (!v126DuplicateBackAttempted && now - v126DuplicateSinceMs > 8_000L) {
++        if (!v126DuplicateBackAttempted && now - v126DuplicateSinceMs >= 8000L) {
+             v126DuplicateBackAttempted = true;
+-            boolean sent = false;
+-            try { sent = performGlobalAction(GLOBAL_ACTION_BACK); }
+-            catch (Throwable ignore) {}
+-            if (sent) {
+-                clearPendingLike("v126 duplicate popup back fallback");
+-                skippedCount.incrementAndGet();
+-                lastButtonFoundMs = now;
+-                diagEvent("V126-DUPLICATE-RECOVERY: guarded BACK sent=true");
+-                v126DuplicateSinceMs = 0L;
+-                transitionTo(STATE_LOOK_LIKE);
+-                return 900L;
++            performGlobalAction(GLOBAL_ACTION_BACK);
++            diagEvent("DUPLICATE-BACK: one guarded attempt");
++        } else if (duplicateLastClickMs == 0L || now - duplicateLastClickMs >= 1200L) {
++            AccessibilityNodeInfo ok = findExactClickableInAll(roots, "موافق");
++            if (ok == null && currentProbe != null) {
++                for (SnapshotItem item : currentProbe.labels) {
++                    if ("موافق".equals(item.label)) {
++                        ok = climbToClickable(item.node);
++                        if (ok != null) break;
++                    }
++                }
++            }
++            if (ok != null) {
++                duplicateLastClickMs = now;
++                diagEvent("DUPLICATE-OK: dispatched=" + performClick(ok));
+             }
+         }
+-        if (now - v126LastDuplicateLogMs > 3_000L) {
+-            v126LastDuplicateLogMs = now;
+-            diagEvent("V126-DUPLICATE-STILL-OPEN: موافق not clickable yet");
+-        }
+-        return 400L;
++        duplicateNextCheckMs = now + 300L;
++        return 300L;
+     }
+ 
+     private long handleV126Look(List<AccessibilityNodeInfo> roots, long now) {
+@@ -1687,11 +1719,6 @@
+ 
+     private long handleV126DirectInterest(List<AccessibilityNodeInfo> roots, long now) {
+         v126SessionHealth(now);
+-        // Some WebViews expose the error sentence only as split labels.
+-        // A visible dialog action justifies a full probe of this exceptional frame.
+-        if (findExactClickableInAll(roots, "موافق") != null) {
+-            currentProbe = new VisibleScreenSnapshot(roots, true);
+-        }
+         long popup = v126HandleDuplicateDialog(roots, now);
+         if (popup >= 0L) return popup;
+         // The app no longer opens a YES confirmation. Wait briefly for a

@@ -294,8 +294,8 @@ v126_methods = r'''
 anchor="    private long handleLookLike(List<AccessibilityNodeInfo> roots, long now) {"
 service=replace_once(service,anchor,v126_methods+anchor,"v126 inserted methods")
 service = replace_once(service,
-    "            lastDumpPath = path;\\n            return path;",
-    "            lastDumpPath = path;\\n            v126AppendHealthToDiagnostic(path);\\n            return path;",
+    "            lastDumpPath = path;\n            return path;",
+    "            lastDumpPath = path;\n            v126AppendHealthToDiagnostic(path);\n            return path;",
     "Attach persisted health to shared diagnostic")
 service_path.write_text(service)
 

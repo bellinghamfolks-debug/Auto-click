@@ -1,0 +1,159 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -276,7 +276,9 @@
+     // verified. This makes hot-path cost depend on visible controls, not total
+     // WebView DOM age.
+     private final ArrayList<AccessibilityNodeInfo> viewportLikeNodeCache = new ArrayList<>(16);
+-    private String viewportLikeNodeCacheSignature = "";
++    private int nextViewportLabel;
++    private volatile long viewportGeneration;
++    private long cachedViewportGeneration;
+     private AccessibilityNodeInfo fastCachedLikeCandidate = null;
+     private long viewportCacheHits = 0L;
+     private long viewportCacheMisses = 0L;
+@@ -937,6 +939,8 @@
+         // the target app. After arming, ignore every other package completely.
+         if (!sessionTargetPackage.isEmpty() && !sessionTargetPackage.equals(pkg)) return;
+ 
++        if (type == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
++                type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) viewportGeneration++;
+         accessibilityEpoch++;
+         lastAccessibilityEventUptimeMs = SystemClock.uptimeMillis();
+         if (type == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+@@ -1010,6 +1014,11 @@
+         lastAccessibilityCacheClearMs = 0L;
+         accessibilityCacheClearCount = 0;
+         consecutiveTickErrors = 0;
++        v126LastHeartbeatMs = v126LastGrowthMs = v126LastStallNoteMs = 0L;
++        v126LastMilestone = 0;
++        v126LastObservedCount = -1;
++        v126DuplicateSinceMs = v126LastDuplicateLogMs = 0L;
++        v126DuplicateBackAttempted = false;
+         accessibilityEpoch = 0L;
+         lastAccessibilityEventUptimeMs = 0L;
+         eventWakeRequests = 0L;
+@@ -1071,6 +1080,10 @@
+     }
+ 
+     private void transitionTo(int newState) {
++        transitionTo(newState, false);
++    }
++
++    private void transitionTo(int newState, boolean completedDirectTap) {
+         int oldState = this.state;
+         long now = System.currentTimeMillis();
+         long oldStateAgeMs = Math.max(0L, now - this.stateChangedAt);
+@@ -1101,7 +1114,7 @@
+         // authoritative probe before any cached list action. This preserves its
+         // stray-confirmation recovery and prevents a late modal from being
+         // hidden by the ultra-fast viewport cache.
+-        if (oldState == STATE_AFTER_LIKE && newState == STATE_LOOK_LIKE) {
++        if (oldState == STATE_AFTER_LIKE && newState == STATE_LOOK_LIKE && !completedDirectTap) {
+             clearViewportLikeNodeCache();
+         }
+ 
+@@ -1328,6 +1341,7 @@
+             fastCachedLikeCandidate = nextLiveCachedLikeCandidate();
+         }
+ 
++        long snapshotGeneration = viewportGeneration;
+         if (fastCachedLikeCandidate == null) {
+             currentProbe = new VisibleScreenSnapshot(roots, true);
+         }
+@@ -1340,7 +1354,7 @@
+ 
+         if (state == STATE_LOOK_LIKE && currentProbe != null &&
+                 suspectedPostConfirmPopupAtMs == 0L) {
+-            rebuildViewportLikeNodeCache(currentProbe);
++            rebuildViewportLikeNodeCache(currentProbe, snapshotGeneration);
+         }
+         diagMaybeSnapshot(now, roots);
+ 
+@@ -1581,6 +1595,7 @@
+                     || currentProbe.countMatches("الإهتمام") > 0
+                     || currentProbe.countMatches("إضافته مرة") > 0;
+             if (duplicate && context) return true;
++            if (!duplicate && !currentProbe.truncated && currentProbe.countMatches("موافق") == 0) return false;
+         }
+         // Android native text index is a targeted fallback for truncated
+         // snapshots / separate modal windows; never traverse all 5000 nodes.
+@@ -1682,14 +1697,15 @@
+         // The app no longer opens a YES confirmation. Wait briefly for a
+         // server duplicate response; count the direct tap only afterward.
+         if (now - stateChangedAt < 1_800L) return 350L;
+-        if (pendingLikeStartedMs != 0L) {
++        boolean completed = pendingLikeStartedMs != 0L;
++        if (completed) {
+             commitPendingLike(now, "v1.26 direct-interest tap (no confirmation)");
+             diagEvent("V126-DIRECT: committed attempted interest after modal grace");
+         } else {
+             diagEvent("V126-DIRECT: no pending tap; moving to verified scroll");
+         }
+         lastButtonFoundMs = now;
+-        transitionTo(STATE_LOOK_LIKE);
++        transitionTo(STATE_LOOK_LIKE, completed);
+         return 150L;
+     }
+ 
+@@ -3793,50 +3809,28 @@
+ 
+     private void clearViewportLikeNodeCache() {
+         viewportLikeNodeCache.clear();
+-        viewportLikeNodeCacheSignature = "";
++        nextViewportLabel = 0;
+         fastCachedLikeCandidate = null;
+     }
+ 
+-    private void rebuildViewportLikeNodeCache(VisibleScreenSnapshot probe) {
+-        if (Build.VERSION.SDK_INT < 33 || probe == null || config == null) return;
+-        List<AccessibilityNodeInfo> labelNodes = probe.matchingLabelNodes(config.likeText, 24);
+-        if (labelNodes.isEmpty()) {
+-            clearViewportLikeNodeCache();
+-            return;
+-        }
+-
+-        // Resolve label -> clickable exactly once per verified viewport. The old
+-        // cache kept label nodes and climbed their parents again for every like,
+-        // which still generated Binder traffic proportional to the number of
+-        // interactions. Cached entries are now the actual clickable controls.
+-        ArrayList<AccessibilityNodeInfo> clickableNodes = new ArrayList<>(labelNodes.size());
+-        HashSet<String> seenBounds = new HashSet<>();
+-        for (AccessibilityNodeInfo labelNode : labelNodes) {
+-            if (labelNode == null) continue;
+-            AccessibilityNodeInfo clickable = climbToClickable(labelNode);
+-            if (clickable == null) continue;
+-            String key;
+-            try { key = boundsKey(clickable); } catch (Throwable t) { continue; }
+-            if (!seenBounds.add(key)) continue;
+-            clickableNodes.add(labelNode);
+-        }
+-        if (clickableNodes.isEmpty()) {
+-            clearViewportLikeNodeCache();
+-            return;
+-        }
+-        viewportLikeNodeCache.clear();
+-        viewportLikeNodeCache.addAll(clickableNodes);
+-        viewportLikeNodeCacheSignature = probe.viewportSignature();
++    private void rebuildViewportLikeNodeCache(VisibleScreenSnapshot probe, long generation) {
++        if (Build.VERSION.SDK_INT < 33 || config == null) return;
++        clearViewportLikeNodeCache();
++        // Keep at most 24 labels. Resolve each live label's clickable ancestor only on use.
++        if (generation != viewportGeneration) return;
++        viewportLikeNodeCache.addAll(probe.matchingLabelNodes(config.likeText, 24));
++        cachedViewportGeneration = generation;
+         viewportCacheRebuilds++;
+     }
+ 
+     private AccessibilityNodeInfo nextLiveCachedLikeCandidate() {
+-        if (viewportLikeNodeCache.isEmpty() || config == null) {
++        if (cachedViewportGeneration != viewportGeneration || viewportLikeNodeCache.isEmpty() || config == null) {
+             viewportCacheMisses++;
+             return null;
+         }
+         String needle = normalizeArabic(config.likeText);
+-        for (AccessibilityNodeInfo label : viewportLikeNodeCache) {
++        while (nextViewportLabel < viewportLikeNodeCache.size()) {
++            AccessibilityNodeInfo label = viewportLikeNodeCache.get(nextViewportLabel++);
+             if (label == null) continue;
+             try {
+                 if (!label.refresh() || !label.isVisibleToUser() || !textMatches(label, needle)) continue;

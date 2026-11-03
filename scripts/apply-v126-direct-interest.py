@@ -72,6 +72,58 @@ v126_methods = r'''
     private boolean v126DuplicateBackAttempted = false;
     private long v126LastDuplicateLogMs = 0L;
 
+    // Bounded, private on-device telemetry. Only aggregated counters and
+    // reasons are persisted, never member names, page text or passwords.
+    private void v126PersistHealth(String reason, long now) {
+        try {
+            java.io.File dir = getExternalFilesDir(null);
+            if (dir == null) return;
+            java.io.File report = new java.io.File(dir, "mokafeefah_v126_health.txt");
+            if (report.exists() && report.length() > 128 * 1024) {
+                java.io.File older = new java.io.File(dir, "mokafeefah_v126_health_previous.txt");
+                if (older.exists()) older.delete();
+                report.renameTo(older);
+            }
+            try (java.io.FileWriter out = new java.io.FileWriter(report, true)) {
+                out.write(now + " | " + reason
+                        + " | count=" + likesCount.get()
+                        + " skip=" + skippedCount.get()
+                        + " state=" + stateName(state)
+                        + " staleViewport=" + unchangedViewportScrolls
+                        + " noLikeTicks=" + consecutiveNoLikeControlTicks
+                        + " errors=" + consecutiveTickErrors
+                        + " tracked=" + sessionMemberIds.size()
+                        + "\n");
+            }
+        } catch (Throwable ignored) {
+            // Diagnostics must never interrupt the automation thread.
+        }
+    }
+
+    private void v126AppendHealthToDiagnostic(String path) {
+        if (path == null || path.isEmpty()) return;
+        try {
+            java.io.File dir = getExternalFilesDir(null);
+            if (dir == null) return;
+            java.io.File report = new java.io.File(dir, "mokafeefah_v126_health.txt");
+            if (!report.isFile()) return;
+            try (java.io.FileReader in = new java.io.FileReader(report);
+                 java.io.FileWriter out = new java.io.FileWriter(path, true)) {
+                out.write("\n\n===== V1.26 PERSISTED HEALTH / NO MEMBER DATA =====\n");
+                char[] buf = new char[2048];
+                int read;
+                int total = 0;
+                while (total < 131072 && (read = in.read(buf)) != -1) {
+                    int toWrite = Math.min(read, 131072 - total);
+                    out.write(buf, 0, toWrite);
+                    total += toWrite;
+                }
+            }
+        } catch (Throwable t) {
+            diagEvent("V126-HEALTH-APPEND-ERROR: " + t.getClass().getSimpleName());
+        }
+    }
+
     private void v126SessionHealth(long now) {
         int count = likesCount.get();
         if (v126LastGrowthMs == 0L) v126LastGrowthMs = now;
@@ -88,6 +140,7 @@ v126_methods = r'''
                     + " state=" + stateName(state)
                     + " viewportStalls=" + unchangedViewportScrolls
                     + " noLikeTicks=" + consecutiveNoLikeControlTicks);
+            v126PersistHealth("CHECKPOINT", now);
         }
         if (v126LastHeartbeatMs == 0L || now - v126LastHeartbeatMs >= 30_000L) {
             v126LastHeartbeatMs = now;
@@ -115,6 +168,7 @@ v126_methods = r'''
                     + " noLikeTicks=" + consecutiveNoLikeControlTicks
                     + " unchangedScrolls=" + unchangedViewportScrolls
                     + " errors=" + consecutiveTickErrors);
+            v126PersistHealth("STALL:" + cause, now);
         }
     }
 
@@ -239,6 +293,10 @@ v126_methods = r'''
 '''
 anchor="    private long handleLookLike(List<AccessibilityNodeInfo> roots, long now) {"
 service=replace_once(service,anchor,v126_methods+anchor,"v126 inserted methods")
+service = replace_once(service,
+    "            lastDumpPath = path;\\n            return path;",
+    "            lastDumpPath = path;\\n            v126AppendHealthToDiagnostic(path);\\n            return path;",
+    "Attach persisted health to shared diagnostic")
 service_path.write_text(service)
 
 gradle=replace_once(gradle,"versionCode 46","versionCode 47","versionCode")

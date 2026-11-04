@@ -1,0 +1,86 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -321,10 +321,14 @@
+      * lookup from that same bounded data set. Native text search remains only
+      * a compatibility fallback when the visible traversal was truncated.
+      */
++    private long nextIndexProbeUptimeMs;
++
+     private final class VisibleScreenSnapshot {
+         final List<AccessibilityNodeInfo> roots;
+         final List<SnapshotItem> labels = new ArrayList<>();
+         final Map<String, AccessibilityNodeInfo> clickableCache = new HashMap<>();
++        int childRequests = 0;
++        int prunedNodes = 0;
+         int visits = 0;
+         int visibleNodes = 0;
+         int nativeQueries = 0;
+@@ -343,8 +347,11 @@
+             boolean eligible = leanTraversal && config != null && !config.filterDivorcedWidowedOnly
+                     && "mawada.net.app".equals(sessionTargetPackage)
+                     && (state == STATE_LOOK_LIKE || state == STATE_MUST_SCROLL)
+-                    && (pendingScrollSignature == null || pendingScrollSignature.startsWith("I:"));
++                    && (pendingScrollSignature == null || pendingScrollSignature.startsWith("I:"))
++                    && (SystemClock.uptimeMillis() >= nextIndexProbeUptimeMs
++                        || (pendingScrollSignature != null && pendingScrollSignature.startsWith("I:")));
+             indexed = eligible && collectIndexedViewport();
++            if (eligible && !indexed) nextIndexProbeUptimeMs = SystemClock.uptimeMillis() + 60_000L;
+             if (!indexed) {
+                 labels.clear();
+                 truncated = false;
+@@ -445,7 +452,7 @@
+                                 || cls.contains("ListView");
+                     }
+                 } catch (Throwable ignore) {}
+-                if (!structuralContainer) return;
++                if (!structuralContainer) { prunedNodes++; return; }
+             }
+ 
+             visits++;
+@@ -475,6 +482,7 @@
+             try { n = node.getChildCount(); } catch (Throwable ignore) {}
+             for (int i = 0; i < n && !truncated; i++) {
+                 AccessibilityNodeInfo child = null;
++                childRequests++;
+                 try { child = childAtBoundedPrefetch(node, i); } catch (Throwable ignore) {}
+                 if (child == null) continue;
+                 track(child);
+@@ -539,6 +547,7 @@
+             try { n = node.getChildCount(); } catch (Throwable ignore) {}
+             for (int i = 0; i < n && !truncated; i++) {
+                 AccessibilityNodeInfo child = null;
++                childRequests++;
+                 try { child = childAtBoundedPrefetch(node, i); } catch (Throwable ignore) {}
+                 if (child == null) continue;
+                 track(child);
+@@ -716,7 +725,9 @@
+         String metrics() {
+             return "visits=" + visits + " visible=" + visibleNodes
+                     + " labels=" + labels.size() + " truncated=" + truncated
+-                    + " buildMs=" + buildMs + " lean=" + leanTraversal + " indexed=" + indexed;
++                    + " buildMs=" + buildMs + " lean=" + leanTraversal + " indexed=" + indexed
++                    + " childRequests=" + childRequests + " pruned=" + prunedNodes
++                    + " fetch=sibling-batch";
+         }
+     }
+ 
+@@ -1087,6 +1098,7 @@
+         accessibilityCacheClearCount = 0;
+         consecutiveTickErrors = 0;
+         v126LastHeartbeatMs = v126LastGrowthMs = v126LastStallNoteMs = 0L;
++        nextIndexProbeUptimeMs = 0L;
+         loadingNextCheckMs = loadingGoneSinceMs = 0L;
+         v126LastMilestone = 0;
+         v126LastObservedCount = -1;
+@@ -3847,7 +3859,10 @@
+         if (node == null) return null;
+         try {
+             if (Build.VERSION.SDK_INT >= 33) {
+-                return node.getChild(index, 0);
++                // Provider batches at most Android's fixed prefetch limit.
++                // Complete this bounded sibling batch before the next request.
++                return node.getChild(index, AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS
++                        | AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE);
+             }
+             return node.getChild(index);
+         } catch (Throwable t) {

@@ -8,11 +8,12 @@
  import java.util.List;
  import java.util.Locale;
  import java.util.Map;
-@@ -322,6 +323,15 @@
+@@ -322,6 +323,16 @@
       * a compatibility fallback when the visible traversal was truncated.
       */
      private long nextIndexProbeUptimeMs;
 +    private static final class AboveScreenPrefix {
++        int start;
 +        int length;
 +        int firstId;
 +        int middleId;
@@ -24,7 +25,7 @@
  
      private final class VisibleScreenSnapshot {
          final List<AccessibilityNodeInfo> roots;
-@@ -329,6 +339,7 @@
+@@ -329,6 +340,7 @@
          final Map<String, AccessibilityNodeInfo> clickableCache = new HashMap<>();
          int childRequests = 0;
          int prunedNodes = 0;
@@ -32,7 +33,7 @@
          int visits = 0;
          int visibleNodes = 0;
          int nativeQueries = 0;
-@@ -422,6 +433,40 @@
+@@ -422,6 +434,39 @@
              return count;
          }
  
@@ -55,76 +56,78 @@
 +            return child != null && child.hashCode() == sourceId && entirelyAbove(child);
 +        }
 +
-+        private int verifiedPrefix(AccessibilityNodeInfo parent, int count) {
-+            if (!"mawada.net.app".equals(sessionTargetPackage) || count < 64) return 0;
++        private AboveScreenPrefix verifiedPrefix(AccessibilityNodeInfo parent, int count) {
++            if (!"mawada.net.app".equals(sessionTargetPackage) || count < 64) return null;
 +            AboveScreenPrefix prefix = aboveScreenPrefixes.get(parent.hashCode());
-+            if (prefix == null || prefix.length >= count ||
-+                    SystemClock.uptimeMillis() - prefix.learnedAt > 120_000L) return 0;
-+            if (!sameAboveChild(parent, 0, prefix.firstId)
-+                    || !sameAboveChild(parent, prefix.length / 2, prefix.middleId)
-+                    || !sameAboveChild(parent, prefix.length - 1, prefix.lastId)) {
++            if (prefix == null || prefix.start + prefix.length >= count ||
++                    SystemClock.uptimeMillis() - prefix.learnedAt > 120_000L) return null;
++            if (!sameAboveChild(parent, prefix.start, prefix.firstId)
++                    || !sameAboveChild(parent, prefix.start + prefix.length / 2, prefix.middleId)
++                    || !sameAboveChild(parent, prefix.start + prefix.length - 1, prefix.lastId)) {
 +                aboveScreenPrefixes.remove(parent.hashCode());
-+                return 0;
++                return null;
 +            }
-+            prefixSkipped += prefix.length;
-+            return prefix.length;
++            return prefix;
 +        }
 +
          private void collectVisible(AccessibilityNodeInfo node, int depth) {
              if (!leanTraversal) {
                  // Exact 1.20 traversal. Confirmation states use this branch so
-@@ -480,14 +525,44 @@
+@@ -480,13 +525,47 @@
  
              int n = 0;
              try { n = node.getChildCount(); } catch (Throwable ignore) {}
--            for (int i = 0; i < n && !truncated; i++) {
++            AboveScreenPrefix cached = verifiedPrefix(node, n);
++            boolean canLearn = cached == null && n >= 64 &&
++                    "mawada.net.app".equals(sessionTargetPackage);
++            int runStart = 0;
++            ArrayList<Integer> run = canLearn ? new ArrayList<Integer>() : null;
+             for (int i = 0; i < n && !truncated; i++) {
 -                AccessibilityNodeInfo child = null;
 -                childRequests++;
 -                try { child = childAtBoundedPrefetch(node, i); } catch (Throwable ignore) {}
 -                if (child == null) continue;
 -                track(child);
-+            int start = verifiedPrefix(node, n);
-+            boolean learningPrefix = n >= 64 &&
-+                    "mawada.net.app".equals(sessionTargetPackage);
-+            // A prefix is learned only from a complete, ordered run of nodes
-+            // whose bounds are entirely above the viewport.
-+            ArrayList<Integer> prefixIds = learningPrefix ? new ArrayList<Integer>() : null;
-+            AboveScreenPrefix previousPrefix = aboveScreenPrefixes.get(node.hashCode());
-+            for (int i = start; i < n && !truncated; i++) {
+-                collectVisible(child, depth + 1);
++                if (cached != null && i == cached.start) {
++                    prefixSkipped += cached.length;
++                    i += cached.length - 1;
++                    continue;
++                }
 +                AccessibilityNodeInfo child = prefixChild(node, i);
-+                if (child == null) { learningPrefix = false; continue; }
-+                if (learningPrefix) {
-+                    CharSequence cls = child.getClassName();
++                if (canLearn) {
++                    CharSequence cls = child == null ? null : child.getClassName();
 +                    String name = cls == null ? "" : cls.toString();
 +                    boolean structural = name.contains("WebView") || name.contains("ScrollView")
 +                            || name.contains("ListView") || name.contains("RecyclerView");
-+                    if (entirelyAbove(child) && !structural) {
-+                        prefixIds.add(child.hashCode());
++                    if (child != null && entirelyAbove(child) && !structural) {
++                        if (run.isEmpty()) runStart = i;
++                        run.add(child.hashCode());
++                    } else if (run.size() >= 64) {
++                        // Keep native headers preceding the hidden run in every snapshot.
++                        canLearn = false;
 +                    } else {
-+                        learningPrefix = false;
++                        run.clear();
 +                    }
 +                }
-                 collectVisible(child, depth + 1);
-             }
-+            if (prefixIds != null && start + prefixIds.size() >= 64 && !truncated) {
++                if (child != null) collectVisible(child, depth + 1);
++            }
++            if (run != null && run.size() >= 64 && !truncated) {
 +                AboveScreenPrefix prefix = new AboveScreenPrefix();
-+                prefix.length = start + prefixIds.size();
-+                prefix.firstId = start == 0 ? prefixIds.get(0) : previousPrefix.firstId;
-+                AccessibilityNodeInfo middle = prefixChild(node, prefix.length / 2);
-+                AccessibilityNodeInfo last = prefixChild(node, prefix.length - 1);
-+                if (!entirelyAbove(middle) || !entirelyAbove(last)) return;
-+                prefix.middleId = middle.hashCode();
-+                prefix.lastId = last.hashCode();
-+                prefix.learnedAt = start == 0 ? SystemClock.uptimeMillis() : previousPrefix.learnedAt;
++                prefix.start = runStart;
++                prefix.length = run.size();
++                prefix.firstId = run.get(0);
++                prefix.middleId = run.get(prefix.length / 2);
++                prefix.lastId = run.get(prefix.length - 1);
++                prefix.learnedAt = SystemClock.uptimeMillis();
 +                if (aboveScreenPrefixes.size() >= 32) {
 +                    aboveScreenPrefixes.remove(aboveScreenPrefixes.keySet().iterator().next());
 +                }
 +                aboveScreenPrefixes.put(node.hashCode(), prefix);
-+            }
+             }
          }
  
-         private void collectVisibleLegacy(AccessibilityNodeInfo node, int depth) {
-@@ -727,7 +802,7 @@
+@@ -727,7 +806,7 @@
                      + " labels=" + labels.size() + " truncated=" + truncated
                      + " buildMs=" + buildMs + " lean=" + leanTraversal + " indexed=" + indexed
                      + " childRequests=" + childRequests + " pruned=" + prunedNodes
@@ -133,7 +136,7 @@
          }
      }
  
-@@ -1098,6 +1173,7 @@
+@@ -1098,6 +1177,7 @@
          accessibilityCacheClearCount = 0;
          consecutiveTickErrors = 0;
          v126LastHeartbeatMs = v126LastGrowthMs = v126LastStallNoteMs = 0L;
@@ -141,7 +144,7 @@
          nextIndexProbeUptimeMs = 0L;
          loadingNextCheckMs = loadingGoneSinceMs = 0L;
          v126LastMilestone = 0;
-@@ -1375,6 +1451,7 @@
+@@ -1375,6 +1455,7 @@
          if (!sessionTargetPackage.isEmpty()) {
              if (!sessionTargetPackage.equals(activePackage)) {
                  if (offTargetSinceMs == 0L) {
@@ -149,7 +152,7 @@
                      offTargetSinceMs = now;
                      clearViewportLikeNodeCache();
                      diagEvent("OFF_TARGET: active=" + activePackage
-@@ -3859,10 +3936,7 @@
+@@ -3859,10 +3940,7 @@
          if (node == null) return null;
          try {
              if (Build.VERSION.SDK_INT >= 33) {

@@ -1,0 +1,172 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -331,6 +331,7 @@
+         int nativeCandidates = 0;
+         int dfsFallbacks = 0; // kept for telemetry compatibility; should stay 0
+         boolean truncated = false;
++        boolean indexed = false;
+         long buildMs = 0L;
+         final boolean leanTraversal;
+         AccessibilityNodeInfo scrollableCache = null;
+@@ -339,9 +340,19 @@
+             long buildStarted = SystemClock.uptimeMillis();
+             this.leanTraversal = leanTraversal;
+             this.roots = roots == null ? Collections.emptyList() : roots;
+-            for (AccessibilityNodeInfo root : this.roots) {
+-                if (root == null || truncated) continue;
+-                collectVisible(root, 0);
++            boolean eligible = leanTraversal && config != null && !config.filterDivorcedWidowedOnly
++                    && "mawada.net.app".equals(sessionTargetPackage)
++                    && (state == STATE_LOOK_LIKE || state == STATE_MUST_SCROLL)
++                    && (pendingScrollSignature == null || pendingScrollSignature.startsWith("I:"));
++            indexed = eligible && collectIndexedViewport();
++            if (!indexed) {
++                labels.clear();
++                truncated = false;
++                visibleNodes = 0;
++                for (AccessibilityNodeInfo root : this.roots) {
++                    if (root == null || truncated) continue;
++                    collectVisible(root, 0);
++                }
+             }
+             Collections.sort(labels, new Comparator<SnapshotItem>() {
+                 @Override public int compare(SnapshotItem a, SnapshotItem b) {
+@@ -352,6 +363,58 @@
+             buildMs = Math.max(0L, SystemClock.uptimeMillis() - buildStarted);
+         }
+ 
++        // Query the provider's text index once per label family. Walking every
++        // retained off-screen sibling caused 17-second snapshots in the soak log.
++        private boolean collectIndexedViewport() {
++            try {
++                collectIndexedText(config.likeText);
++                collectIndexedText("الإقامة");
++                collectIndexedText("سنة");
++                if (countMatches(config.likeText) == 0 || indexedAnchorCount() < 2) return false;
++                for (String keyword : config.profileKeywords) collectIndexedText(keyword);
++                collectIndexedText("مضاف");
++                collectIndexedText("موافق");
++                return !truncated;
++            } catch (RuntimeException ex) {
++                return false;
++            }
++        }
++
++        private void collectIndexedText(String query) {
++            if (query == null || query.isEmpty()) return;
++            HashSet<AccessibilityNodeInfo> seen = new HashSet<>();
++            for (AccessibilityNodeInfo root : roots) {
++                nativeQueries++;
++                List<AccessibilityNodeInfo> hits = root.findAccessibilityNodeInfosByText(query);
++                if (hits == null) continue;
++                // Every legacy node is owned by this tick, including hidden hits.
++                for (AccessibilityNodeInfo node : hits) track(node);
++                for (AccessibilityNodeInfo node : hits) {
++                    if (node == null || !seen.add(node)) continue;
++                    nativeCandidates++;
++                    Rect bounds = new Rect();
++                    node.getBoundsInScreen(bounds);
++                    if (!node.isVisibleToUser() || bounds.isEmpty() || bounds.bottom <= 0
++                            || bounds.top >= screenH || bounds.right <= 0 || bounds.left >= screenW) continue;
++                    addLabel(node, node.getText(), bounds);
++                    addLabel(node, node.getContentDescription(), bounds);
++                    visibleNodes++;
++                }
++            }
++            if (labels.size() >= SNAPSHOT_MAX_LABELS) truncated = true;
++        }
++
++        private int indexedAnchorCount() {
++            int count = 0;
++            String residence = normalizeArabic("الإقامة");
++            String age = normalizeArabic("سنة");
++            for (SnapshotItem item : labels) {
++                if (item.top < screenH * 0.10f || item.top > screenH * 0.92f) continue;
++                if (item.label.contains(residence) || item.label.matches(".*[0-9٠-٩]+\\s*" + age + ".*")) count++;
++            }
++            return count;
++        }
++
+         private void collectVisible(AccessibilityNodeInfo node, int depth) {
+             if (!leanTraversal) {
+                 // Exact 1.20 traversal. Confirmation states use this branch so
+@@ -560,6 +623,8 @@
+             String close = normalizeArabic(config == null ? "" : config.closeText);
+             for (SnapshotItem item : labels) {
+                 String v = item.label;
++                if (indexed && !(v.contains(normalizeArabic("الإقامة"))
++                        || v.matches(".*[0-9٠-٩]+\\s*" + normalizeArabic("سنة") + ".*"))) continue;
+                 if (v.length() < 2 || v.length() > 64) continue;
+                 if (!like.isEmpty() && v.contains(like)) continue;
+                 if (!yes.isEmpty() && v.equals(yes)) continue;
+@@ -576,12 +641,19 @@
+                 if (parts.size() >= 10) break;
+             }
+             if (parts.isEmpty()) return "";
++            if (indexed) {
++                // WebView source IDs distinguish rows with identical ages/residences.
++                // Pair them with independently queried row text, never screen coordinates.
++                for (SnapshotItem item : labels) {
++                    if (item.label.contains(like)) parts.add("node=" + item.node.hashCode());
++                }
++            }
+             StringBuilder out = new StringBuilder(96);
+             for (String part : parts) {
+                 if (out.length() > 0) out.append('|');
+                 out.append(part, 0, Math.min(part.length(), 18));
+             }
+-            return Integer.toHexString(out.toString().hashCode()) + ":" + parts.size();
++            return (indexed ? "I:" : "") + Integer.toHexString(out.toString().hashCode()) + ":" + parts.size();
+         }
+ 
+         Rect scrollGestureBounds() {
+@@ -644,7 +716,7 @@
+         String metrics() {
+             return "visits=" + visits + " visible=" + visibleNodes
+                     + " labels=" + labels.size() + " truncated=" + truncated
+-                    + " buildMs=" + buildMs + " lean=" + leanTraversal;
++                    + " buildMs=" + buildMs + " lean=" + leanTraversal + " indexed=" + indexed;
+         }
+     }
+ 
+@@ -1632,7 +1704,7 @@
+     // by the common label "موافق". The snapshot is already bounded/visible.
+     private boolean v126HasAlreadyInterestedDialog(List<AccessibilityNodeInfo> roots) {
+         if (currentProbe != null && duplicateInSnapshot()) return true;
+-        if (currentProbe != null && !currentProbe.truncated &&
++        if (currentProbe != null && !currentProbe.indexed && !currentProbe.truncated &&
+                 currentProbe.countMatches("مضاف") == 0 && currentProbe.countMatches("موافق") == 0) return false;
+         for (AccessibilityNodeInfo root : roots) {
+             List<AccessibilityNodeInfo> hits = root.findAccessibilityNodeInfosByText("مضاف");
+@@ -2683,6 +2755,11 @@
+     private boolean verifyPendingScrollProgress(List<AccessibilityNodeInfo> roots, long now) {
+         if (pendingScrollSignature == null) return false;
+ 
++        if (pendingScrollSignature.startsWith("I:") && currentProbe != null && !currentProbe.indexed) {
++            diagEvent("SCROLL-VERIFY: waiting for indexed row anchors");
++            return true;
++        }
++
+         String before = pendingScrollSignature;
+         pendingScrollSignature = null;
+         String after = viewportSignature(roots);
+@@ -2974,6 +3051,19 @@
+         // Hot path: use Android's indexed native text search. The previous
+         // recursive implementation walked the entire WebView even when no
+         // end-of-list phrase existed, which is exactly the common case.
++        if (currentProbe != null && currentProbe.indexed) {
++            for (String hint : END_OF_LIST_HINTS) {
++                for (AccessibilityNodeInfo root : roots) {
++                    List<AccessibilityNodeInfo> hits = root.findAccessibilityNodeInfosByText(hint);
++                    if (hits == null) continue;
++                    for (AccessibilityNodeInfo node : hits) track(node);
++                    for (AccessibilityNodeInfo node : hits) {
++                        if (node != null && node.isVisibleToUser()) return true;
++                    }
++                }
++            }
++            return false;
++        }
+         if (currentProbe != null) return currentProbe.anyVisible(END_OF_LIST_HINTS);
+ 
+         List<String> needles = new ArrayList<>(END_OF_LIST_HINTS.length);

@@ -1,0 +1,163 @@
+--- a/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
++++ b/app/src/main/java/com/mokafeefah/clicker/ClickerService.java
+@@ -28,6 +28,7 @@
+ import java.util.HashSet;
+ import java.util.IdentityHashMap;
+ import java.util.LinkedHashSet;
++import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Locale;
+ import java.util.Map;
+@@ -322,6 +323,15 @@
+      * a compatibility fallback when the visible traversal was truncated.
+      */
+     private long nextIndexProbeUptimeMs;
++    private static final class AboveScreenPrefix {
++        int length;
++        int firstId;
++        int middleId;
++        int lastId;
++        long learnedAt;
++    }
++    private final LinkedHashMap<Integer, AboveScreenPrefix> aboveScreenPrefixes = new LinkedHashMap<>();
++
+ 
+     private final class VisibleScreenSnapshot {
+         final List<AccessibilityNodeInfo> roots;
+@@ -329,6 +339,7 @@
+         final Map<String, AccessibilityNodeInfo> clickableCache = new HashMap<>();
+         int childRequests = 0;
+         int prunedNodes = 0;
++        int prefixSkipped = 0;
+         int visits = 0;
+         int visibleNodes = 0;
+         int nativeQueries = 0;
+@@ -422,6 +433,40 @@
+             return count;
+         }
+ 
++        private boolean entirelyAbove(AccessibilityNodeInfo node) {
++            if (node == null) return false;
++            Rect bounds = new Rect();
++            node.getBoundsInScreen(bounds);
++            return !bounds.isEmpty() && bounds.bottom <= 0;
++        }
++
++        private AccessibilityNodeInfo prefixChild(AccessibilityNodeInfo parent, int index) {
++            childRequests++;
++            AccessibilityNodeInfo child = childAtBoundedPrefetch(parent, index);
++            track(child);
++            return child;
++        }
++
++        private boolean sameAboveChild(AccessibilityNodeInfo parent, int index, int sourceId) {
++            AccessibilityNodeInfo child = prefixChild(parent, index);
++            return child != null && child.hashCode() == sourceId && entirelyAbove(child);
++        }
++
++        private int verifiedPrefix(AccessibilityNodeInfo parent, int count) {
++            if (!"mawada.net.app".equals(sessionTargetPackage) || count < 64) return 0;
++            AboveScreenPrefix prefix = aboveScreenPrefixes.get(parent.hashCode());
++            if (prefix == null || prefix.length >= count ||
++                    SystemClock.uptimeMillis() - prefix.learnedAt > 120_000L) return 0;
++            if (!sameAboveChild(parent, 0, prefix.firstId)
++                    || !sameAboveChild(parent, prefix.length / 2, prefix.middleId)
++                    || !sameAboveChild(parent, prefix.length - 1, prefix.lastId)) {
++                aboveScreenPrefixes.remove(parent.hashCode());
++                return 0;
++            }
++            prefixSkipped += prefix.length;
++            return prefix.length;
++        }
++
+         private void collectVisible(AccessibilityNodeInfo node, int depth) {
+             if (!leanTraversal) {
+                 // Exact 1.20 traversal. Confirmation states use this branch so
+@@ -480,14 +525,44 @@
+ 
+             int n = 0;
+             try { n = node.getChildCount(); } catch (Throwable ignore) {}
+-            for (int i = 0; i < n && !truncated; i++) {
+-                AccessibilityNodeInfo child = null;
+-                childRequests++;
+-                try { child = childAtBoundedPrefetch(node, i); } catch (Throwable ignore) {}
+-                if (child == null) continue;
+-                track(child);
++            int start = verifiedPrefix(node, n);
++            boolean learningPrefix = n >= 64 &&
++                    "mawada.net.app".equals(sessionTargetPackage);
++            // A prefix is learned only from a complete, ordered run of nodes
++            // whose bounds are entirely above the viewport.
++            ArrayList<Integer> prefixIds = learningPrefix ? new ArrayList<Integer>() : null;
++            AboveScreenPrefix previousPrefix = aboveScreenPrefixes.get(node.hashCode());
++            for (int i = start; i < n && !truncated; i++) {
++                AccessibilityNodeInfo child = prefixChild(node, i);
++                if (child == null) { learningPrefix = false; continue; }
++                if (learningPrefix) {
++                    CharSequence cls = child.getClassName();
++                    String name = cls == null ? "" : cls.toString();
++                    boolean structural = name.contains("WebView") || name.contains("ScrollView")
++                            || name.contains("ListView") || name.contains("RecyclerView");
++                    if (entirelyAbove(child) && !structural) {
++                        prefixIds.add(child.hashCode());
++                    } else {
++                        learningPrefix = false;
++                    }
++                }
+                 collectVisible(child, depth + 1);
+             }
++            if (prefixIds != null && start + prefixIds.size() >= 64 && !truncated) {
++                AboveScreenPrefix prefix = new AboveScreenPrefix();
++                prefix.length = start + prefixIds.size();
++                prefix.firstId = start == 0 ? prefixIds.get(0) : previousPrefix.firstId;
++                AccessibilityNodeInfo middle = prefixChild(node, prefix.length / 2);
++                AccessibilityNodeInfo last = prefixChild(node, prefix.length - 1);
++                if (!entirelyAbove(middle) || !entirelyAbove(last)) return;
++                prefix.middleId = middle.hashCode();
++                prefix.lastId = last.hashCode();
++                prefix.learnedAt = SystemClock.uptimeMillis();
++                if (aboveScreenPrefixes.size() >= 32) {
++                    aboveScreenPrefixes.remove(aboveScreenPrefixes.keySet().iterator().next());
++                }
++                aboveScreenPrefixes.put(node.hashCode(), prefix);
++            }
+         }
+ 
+         private void collectVisibleLegacy(AccessibilityNodeInfo node, int depth) {
+@@ -727,7 +802,7 @@
+                     + " labels=" + labels.size() + " truncated=" + truncated
+                     + " buildMs=" + buildMs + " lean=" + leanTraversal + " indexed=" + indexed
+                     + " childRequests=" + childRequests + " pruned=" + prunedNodes
+-                    + " fetch=sibling-batch";
++                    + " prefixSkipped=" + prefixSkipped + " fetch=on-demand";
+         }
+     }
+ 
+@@ -1098,6 +1173,7 @@
+         accessibilityCacheClearCount = 0;
+         consecutiveTickErrors = 0;
+         v126LastHeartbeatMs = v126LastGrowthMs = v126LastStallNoteMs = 0L;
++        aboveScreenPrefixes.clear();
+         nextIndexProbeUptimeMs = 0L;
+         loadingNextCheckMs = loadingGoneSinceMs = 0L;
+         v126LastMilestone = 0;
+@@ -1375,6 +1451,7 @@
+         if (!sessionTargetPackage.isEmpty()) {
+             if (!sessionTargetPackage.equals(activePackage)) {
+                 if (offTargetSinceMs == 0L) {
++                    aboveScreenPrefixes.clear();
+                     offTargetSinceMs = now;
+                     clearViewportLikeNodeCache();
+                     diagEvent("OFF_TARGET: active=" + activePackage
+@@ -3859,10 +3936,7 @@
+         if (node == null) return null;
+         try {
+             if (Build.VERSION.SDK_INT >= 33) {
+-                // Provider batches at most Android's fixed prefetch limit.
+-                // Complete this bounded sibling batch before the next request.
+-                return node.getChild(index, AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS
+-                        | AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE);
++                return node.getChild(index, 0);
+             }
+             return node.getChild(index);
+         } catch (Throwable t) {

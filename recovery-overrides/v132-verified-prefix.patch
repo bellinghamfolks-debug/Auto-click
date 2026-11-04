@@ -115,7 +115,7 @@
 +                if (!entirelyAbove(middle) || !entirelyAbove(last)) return;
 +                prefix.middleId = middle.hashCode();
 +                prefix.lastId = last.hashCode();
-+                prefix.learnedAt = SystemClock.uptimeMillis();
++                prefix.learnedAt = start == 0 ? SystemClock.uptimeMillis() : previousPrefix.learnedAt;
 +                if (aboveScreenPrefixes.size() >= 32) {
 +                    aboveScreenPrefixes.remove(aboveScreenPrefixes.keySet().iterator().next());
 +                }

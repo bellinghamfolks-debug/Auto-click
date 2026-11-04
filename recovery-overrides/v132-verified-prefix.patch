@@ -53,7 +53,7 @@
 +
 +        private boolean sameAboveChild(AccessibilityNodeInfo parent, int index, int sourceId) {
 +            AccessibilityNodeInfo child = prefixChild(parent, index);
-+            return child != null && child.hashCode() == sourceId && entirelyAbove(child);
++            return child != null && child.refresh() && child.hashCode() == sourceId && entirelyAbove(child);
 +        }
 +
 +        private AboveScreenPrefix verifiedPrefix(AccessibilityNodeInfo parent, int count) {
